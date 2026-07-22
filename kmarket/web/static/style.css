@@ -1,0 +1,199 @@
+/* KMARKET — визуальный язык заимствован у KTOOLS, не выдуман заново.
+   Золото только на вердикте (единственный акцент страницы), ground —
+   холодный сине-серый вьюпорта Maya, шрифт Segoe UI, моноширинный
+   только на технических токенах: ценах, перцентилях, таймстемпах. */
+
+:root {
+  /* Ground */
+  --bg: #16171b;
+  --bg-2: #1b1d22;
+  --line: #262931;
+
+  /* Чернила */
+  --ink: #e6e8ec;
+  --ink-2: #9aa1ad;
+  --ink-3: #6b7280;
+
+  /* Бренд-акцент */
+  --gold: #e8c84a;
+
+  /* Семантика сигналов — палитра семей KTOOLS */
+  --buy: #429381;
+  --buy-lit: #7bc3b4;
+  --wait: #ae8229;
+  --wait-lit: #d6ab51;
+  --avoid: #c66c62;
+  --avoid-lit: #dca59f;
+
+  /* Типографская шкала — шесть ступеней, между ними ничего */
+  --t-micro: 12px;
+  --t-sm: 14px;
+  --t-body: 16px;
+  --t-lede: 18px;
+  --t-card: 20px;
+  --t-h2: clamp(28px, 3.4vw, 42px);
+  --t-display: clamp(40px, 7.6vw, 88px);
+
+  --track: .14em;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 32px 96px;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--t-body)/1.55 system-ui, "Segoe UI", sans-serif;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+
+/* --- шапка --- */
+.top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+  padding: 40px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.wordmark {
+  font-family: var(--mono);
+  font-size: var(--t-card);
+  letter-spacing: var(--track);
+  color: var(--gold);
+}
+.by {
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: var(--t-micro);
+  letter-spacing: 0;
+  color: var(--ink-3);
+  margin-left: 12px;
+}
+.regions { display: flex; gap: 4px; }
+
+/* --- секции --- */
+section { padding: 56px 0 0; }
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.label {
+  font-size: var(--t-micro);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+.label.sm { margin-bottom: 8px; }
+.note { font-size: var(--t-micro); color: var(--ink-3); margin: 12px 0 0; }
+.loading { color: var(--ink-2); padding: 80px 0; }
+
+/* --- вердикт --- */
+.verdict {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 32px; flex-wrap: wrap;
+  padding-top: 48px;
+}
+.verdict-word {
+  font-size: var(--t-display);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.01em;
+}
+.verdict-summary { color: var(--ink-2); margin: 12px 0 0; font-size: var(--t-lede); }
+.verdict-price { text-align: right; }
+.price {
+  font-family: var(--mono);
+  font-size: var(--t-h2);
+  color: var(--gold);
+  line-height: 1;
+}
+.price-meta { font-size: var(--t-micro); color: var(--ink-3); margin-top: 8px; }
+
+[data-state="buy"] .verdict-word { color: var(--buy-lit); }
+[data-state="wait"] .verdict-word { color: var(--wait-lit); }
+[data-state="avoid"] .verdict-word { color: var(--avoid-lit); }
+
+.reasons ul { margin: 0; padding-left: 20px; color: var(--ink-2); }
+.reasons li { margin-bottom: 8px; }
+.confidence {
+  font-size: var(--t-micro); color: var(--ink-3);
+  letter-spacing: var(--track); text-transform: uppercase; margin-top: 20px;
+}
+
+/* --- переключатели --- */
+.switch { display: flex; gap: 4px; }
+button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: var(--t-micro)/1 system-ui, "Segoe UI", sans-serif;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+button:hover { color: var(--ink); border-color: var(--ink-3); }
+button[aria-pressed="true"] { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+
+/* --- график --- */
+canvas { width: 100%; display: block; }
+
+/* --- таблицы --- */
+table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+th {
+  text-align: right; font-size: var(--t-micro); font-weight: 600;
+  letter-spacing: var(--track); text-transform: uppercase; color: var(--ink-3);
+  padding: 0 0 10px; border-bottom: 1px solid var(--line);
+}
+th:first-child, td:first-child { text-align: left; }
+td { text-align: right; padding: 11px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+td:first-child { font-family: system-ui, "Segoe UI", sans-serif; color: var(--ink-2); }
+tr.highlight td { color: var(--gold); }
+
+/* --- тепловая карта --- */
+.heatmap { display: grid; grid-template-columns: 34px repeat(24, 1fr); gap: 2px; }
+.heatmap .h-label {
+  font-size: 10px; color: var(--ink-3); font-family: var(--mono);
+  display: flex; align-items: center;
+}
+.heatmap .h-hour { justify-content: center; }
+.heatmap .cell { aspect-ratio: 1; border-radius: 2px; background: var(--bg-2); }
+.heat-legend {
+  display: flex; align-items: center; gap: 10px;
+  font-size: var(--t-micro); color: var(--ink-3); margin-top: 14px;
+}
+.heat-legend .grad {
+  width: 160px; height: 8px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--buy), #3a3f49, var(--avoid));
+}
+
+.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 32px; }
+ul.tight { margin: 0; padding-left: 18px; font-size: var(--t-sm); color: var(--ink-2); }
+ul.tight li { margin-bottom: 4px; }
+ul.tight b { font-family: var(--mono); color: var(--ink); font-weight: 400; }
+
+/* --- бэктест --- */
+.stock { display: flex; gap: 40px; flex-wrap: wrap; margin-bottom: 24px; }
+.stock .big { font-family: var(--mono); font-size: var(--t-h2); color: var(--buy-lit); line-height: 1; }
+.stock .cap { font-size: var(--t-micro); color: var(--ink-3); letter-spacing: var(--track); text-transform: uppercase; margin-top: 8px; }
+.stock p { margin: 0; max-width: 46ch; color: var(--ink-2); font-size: var(--t-sm); }
+details { margin-top: 24px; }
+summary { cursor: pointer; color: var(--ink-3); font-size: var(--t-sm); }
+summary:hover { color: var(--ink-2); }
+details table { margin-top: 16px; }
+
+footer {
+  margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--line);
+  font-size: var(--t-micro); color: var(--ink-3);
+}
+
+@media (max-width: 720px) {
+  body { padding-inline: 20px; }
+  .cols2 { grid-template-columns: 1fr; }
+  .verdict-price { text-align: left; }
+  .heatmap { grid-template-columns: 28px repeat(24, 1fr); gap: 1px; }
+}

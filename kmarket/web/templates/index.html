@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMARKET — жетон WoW</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316171b'/%3E%3Cpath d='M11 7v18M11 16l9-9M14 13l7 12' stroke='%23e8c84a' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wordmark">KMARKET<span class="by">by KareninTeam</span></div>
+  <div class="regions" id="regions"></div>
+</header>
+
+<main id="app">
+  <p class="loading">Считаю историю и бэктест — несколько секунд…</p>
+</main>
+
+<template id="tpl-report">
+  <section class="verdict" data-slot="verdict">
+    <div class="verdict-main">
+      <div class="verdict-word" data-slot="word"></div>
+      <p class="verdict-summary" data-slot="summary"></p>
+    </div>
+    <div class="verdict-price">
+      <div class="price" data-slot="price"></div>
+      <div class="price-meta" data-slot="priceMeta"></div>
+    </div>
+  </section>
+
+  <section class="reasons">
+    <h2 class="label">Почему</h2>
+    <ul data-slot="reasons"></ul>
+    <p class="confidence" data-slot="confidence"></p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 class="label">Цена</h2>
+      <div class="switch" data-slot="ranges"></div>
+    </div>
+    <canvas id="chart" height="320"></canvas>
+    <p class="note" data-slot="chartNote"></p>
+  </section>
+
+  <section>
+    <h2 class="label">Где стоит цена сейчас</h2>
+    <table class="windows">
+      <thead>
+        <tr><th>Окно</th><th>Мин</th><th>Медиана</th><th>Макс</th><th>Размах</th><th>Перцентиль</th></tr>
+      </thead>
+      <tbody data-slot="windows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2 class="label">Когда дешевле — час × день недели</h2>
+      <span class="note" data-slot="seasonNote"></span>
+    </div>
+    <div class="heatmap" data-slot="heatmap"></div>
+    <div class="heat-legend">
+      <span>дешевле</span><i class="grad"></i><span>дороже</span>
+    </div>
+    <div class="cols2">
+      <div><h3 class="label sm">Лучшие окна</h3><ul class="tight" data-slot="bestCells"></ul></div>
+      <div><h3 class="label sm">Худшие окна</h3><ul class="tight" data-slot="worstCells"></ul></div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="label">Проверка правила на истории</h2>
+    <div class="stock" data-slot="stockpile"></div>
+    <details>
+      <summary>Все правила, которые перебирались</summary>
+      <table class="windows grid">
+        <thead>
+          <tr><th>Окно</th><th>Порог</th><th>Сигналов/год</th><th>Локальный выигрыш</th><th>Типичное ожидание</th></tr>
+        </thead>
+        <tbody data-slot="grid"></tbody>
+      </table>
+    </details>
+  </section>
+
+  <footer data-slot="footer"></footer>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
