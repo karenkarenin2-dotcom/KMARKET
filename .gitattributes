@@ -1,0 +1,6 @@
+# Разработка идёт на Windows (CRLF), сборщик крутится в Actions на Linux (LF).
+# Нормализуем явно, чтобы shell-шаги workflow не ловили \r.
+* text=auto eol=lf
+
+# Данные — всегда LF, иначе diff истории будет шумным.
+*.csv text eol=lf

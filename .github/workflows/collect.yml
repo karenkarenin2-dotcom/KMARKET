@@ -1,0 +1,47 @@
+name: collect
+
+# Сбор цены жетона. Опрашиваем каждые 10 минут, хотя цена меняется примерно
+# раз в 20: крон в Actions не гарантирует точность и в пиковые часы может
+# задержаться или пропустить запуск. Лишние опросы бесплатны (дубли
+# отсеиваются по времени Blizzard), а пропущенный час не восстановить ничем.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: # кнопка «запустить сейчас» на вкладке Actions
+
+permissions:
+  contents: write # сборщик коммитит историю в этот же репозиторий
+
+concurrency:
+  group: collect
+  cancel-in-progress: false # два сборщика разом устроили бы гонку за push
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Никакого pip: сборщик работает на голой стандартной библиотеке.
+      - name: Снять цену
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: python -m kmarket.collect
+
+      - name: Закоммитить новые точки
+        run: |
+          if [ -z "$(git status --porcelain data)" ]; then
+            echo "Новых точек нет — коммитить нечего."
+            exit 0
+          fi
+          git config user.name "kmarket-collector"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git commit -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git pull --rebase --autostash
+          git push
