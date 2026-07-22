@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import config
 from ..analytics import report as build_report
-from ..analytics.report import chart_points
+from ..analytics.report import chart_data
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -45,4 +45,4 @@ def api_report(region: str, fresh: bool = False) -> dict:
 def api_chart(region: str, days: int = 90) -> dict:
     _check_region(region)
     days = max(1, min(days, 100_000))
-    return {"region": region, "days": days, "points": chart_points(region, days)}
+    return {"region": region, "days": days, **chart_data(region, days)}

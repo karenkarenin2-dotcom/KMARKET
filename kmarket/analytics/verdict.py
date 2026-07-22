@@ -30,11 +30,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .events import LAUNCH as LAUNCH_KIND
 from .percentile import CONTEXT_WINDOW, DECISION_WINDOW, Trend, WindowStats
 
 BUY = "buy"
 WAIT = "wait"
 AVOID = "avoid"
+
+# Порядок осторожности: сигналы могут только УЖЕСТОЧАТЬ вердикт, никогда
+# не смягчать. Ошибка «не купил вовремя» стоит ожидания, ошибка «купил
+# запас на пике перед запуском дополнения» стоит 12% от каждого жетона.
+CAUTION = {BUY: 0, WAIT: 1, AVOID: 2}
 
 # Пороги перцентиля в решающем окне (90 дней). Подобраны бэктестом —
 # см. объяснение в шапке модуля, «жадный» порог 5 проигрывает.
@@ -83,12 +89,43 @@ def _confidence(decision: WindowStats | None, gap_hours: float | None) -> str:
     return "высокая"
 
 
+def _event_reason(event: dict) -> tuple[str, str | None]:
+    """Что говорит фаза игрового события. Возвращает (текст, сдвиг вердикта).
+
+    Событийный анализ по 18 патчам (см. events.study) даёт самый сильный
+    сигнал из всех, что мы нашли: вокруг запуска дополнения размах 30%,
+    против 11% у стратегии перцентилей. Поэтому фаза события имеет право
+    перебивать перцентиль — но только в сторону осторожности.
+    """
+    days, kind = event["days"], event["kind"]
+    strong = kind == LAUNCH_KIND
+    if event["phase"] == "before":
+        text = (
+            f"Через {days} дн — {event['label']}. Перед такими событиями цена "
+            f"исторически задрана ({'+12%' if strong else '+7%'} за месяц до) "
+            f"и падает после. Запасаться сейчас — покупать на локальном пике."
+        )
+        return text, AVOID
+    if event["phase"] == "just_happened":
+        return (
+            f"{event['label']} — {abs(days)} дн назад. Обычно с этого момента "
+            f"цена начинает оседать; спешить не нужно.",
+            WAIT,
+        )
+    return (
+        f"{event['label']} прошло {abs(days)} дн назад — исторически это фаза "
+        f"низких цен ({'−12%' if strong else '−5%'} к уровню вокруг события).",
+        None,
+    )
+
+
 def decide(
     current: float,
     windows: list[WindowStats],
     trend: Trend,
     *,
     max_gap_hours: float | None = None,
+    event: dict | None = None,
 ) -> Verdict:
     decision = _find(windows, DECISION_WINDOW)
     context = _find(windows, CONTEXT_WINDOW)
@@ -146,6 +183,15 @@ def decide(
             "Цена уже разворачивается вверх с низкой базы — окно закрывается."
         )
     reasons.extend(trend.notes)
+
+    # Фаза игрового события — самый сильный найденный сигнал (размах 30%
+    # вокруг запуска дополнения против 11% у перцентилей), поэтому имеет
+    # право перебить перцентиль, но только в сторону осторожности.
+    if event:
+        text, shift = _event_reason(event)
+        reasons.append(text)
+        if shift and CAUTION[shift] > CAUTION[state]:
+            state = shift
 
     if decision.spread_pct < 8:
         reasons.append(

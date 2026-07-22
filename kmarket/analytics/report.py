@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .. import config
-from . import backtest, frame, percentile, seasonality, verdict
+from . import backtest, events, frame, percentile, seasonality, verdict
 
 CACHE_TTL_SECONDS = 240
 _cache: dict[str, tuple[float, dict]] = {}
@@ -27,15 +27,19 @@ def _local(moment: pd.Timestamp) -> str:
     return moment.tz_convert(config.LOCAL_TZ).isoformat()
 
 
-def chart_points(region: str, days: int, max_points: int = 900) -> list[list]:
-    """Точки для графика в МЕСТНОМ времени, прорежённые до вменяемого числа."""
+def chart_data(region: str, days: int, max_points: int = 900) -> dict:
+    """Точки графика в МЕСТНОМ времени плюс попавшие в диапазон события."""
     chunk = frame.window(frame.load(region), days)
     if chunk.empty:
-        return []
+        return {"points": [], "events": []}
+    marks = events.in_range(chunk.index[0], chunk.index[-1])
     if len(chunk) > max_points:
         chunk = chunk.iloc[:: len(chunk) // max_points + 1]
     local = chunk.tz_convert(config.LOCAL_TZ)
-    return [[moment.isoformat(), round(float(price))] for moment, price in local.items()]
+    return {
+        "points": [[moment.isoformat(), round(float(price))] for moment, price in local.items()],
+        "events": marks,
+    }
 
 
 def _build(region: str) -> dict:
@@ -48,8 +52,13 @@ def _build(region: str) -> dict:
     windows = percentile.all_windows(series, current)
     movement = percentile.trend(series, current)
     density = frame.coverage(series, days=30)
+    event_now = events.context()
     call = verdict.decide(
-        current, windows, movement, max_gap_hours=density.get("max_gap_hours")
+        current,
+        windows,
+        movement,
+        max_gap_hours=density.get("max_gap_hours"),
+        event=event_now,
     )
 
     season = seasonality.compute(series)
@@ -80,6 +89,11 @@ def _build(region: str) -> dict:
         "trend": asdict(movement),
         "windows": [asdict(w) | {"spread_pct": round(w.spread_pct, 1)} for w in windows],
         "seasonality": asdict(season) if season else None,
+        "events": {
+            "now": event_now,
+            "upcoming": events.upcoming(3),
+            "studies": [asdict(s) for s in events.all_studies(series)],
+        },
         "backtest": {
             "rule": rule,
             "stockpile": asdict(stock) if stock else None,

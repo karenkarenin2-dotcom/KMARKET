@@ -176,6 +176,23 @@ ul.tight { margin: 0; padding-left: 18px; font-size: var(--t-sm); color: var(--i
 ul.tight li { margin-bottom: 4px; }
 ul.tight b { font-family: var(--mono); color: var(--ink); font-weight: 400; }
 
+/* --- события --- */
+.events { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.event-card { border: 1px solid var(--line); border-radius: 4px; padding: 18px 18px 14px; }
+.event-card h3 {
+  margin: 0 0 4px; font-size: var(--t-card); font-weight: 600;
+}
+.event-card .count { font-size: var(--t-micro); color: var(--ink-3); }
+.event-card .spark { display: block; width: 100%; height: 64px; margin: 14px 0 10px; overflow: visible; }
+.event-card .phases { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: var(--t-sm); }
+.event-card .phases span { display: block; }
+.event-card .phases .cap {
+  font-family: system-ui, "Segoe UI", sans-serif; font-size: 10px;
+  letter-spacing: var(--track); text-transform: uppercase; color: var(--ink-3); margin-top: 3px;
+}
+.up { color: var(--avoid-lit); }
+.down { color: var(--buy-lit); }
+
 /* --- бэктест --- */
 .stock { display: flex; gap: 40px; flex-wrap: wrap; margin-bottom: 24px; }
 .stock .big { font-family: var(--mono); font-size: var(--t-h2); color: var(--buy-lit); line-height: 1; }
