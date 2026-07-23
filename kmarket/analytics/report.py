@@ -103,6 +103,14 @@ def _build(region: str) -> dict:
     }
 
 
+def invalidate(region: str | None = None) -> None:
+    """Сбросить кэш отчёта — после того как в историю легла новая точка."""
+    if region is None:
+        _cache.clear()
+    else:
+        _cache.pop(region, None)
+
+
 def report(region: str = config.PRIMARY_REGION, *, fresh: bool = False) -> dict:
     cached = _cache.get(region)
     if cached and not fresh and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:

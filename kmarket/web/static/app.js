@@ -61,6 +61,34 @@ async function load() {
   state.report = report;
   state.chart = chart;
   render();
+  refreshLive();
+}
+
+/* Освежаем заголовок живой ценой прямо у Blizzard: история на диске может
+   отставать на несколько минут, а цена в шапке должна быть точной. Запрос
+   необязательный — если не вышло, остаётся цена из истории. */
+async function refreshLive() {
+  const region = state.region;
+  let live;
+  try {
+    live = await fetch(`/api/live/${region}`).then((r) => r.json());
+  } catch { return; }
+  if (!live || !live.available || region !== state.region || !state.report) return;
+
+  const priceEl = document.querySelector('.price');
+  const metaEl = document.querySelector('[data-slot="priceMeta"]');
+  if (priceEl) priceEl.textContent = `${gold(live.price)} g`;
+  if (metaEl) {
+    metaEl.textContent = `${when(live.updated_utc)} · ${ageText(live.age_minutes)} · напрямую у Blizzard`;
+  }
+  // Если пришла свежая точка — цена в истории изменилась, вердикт мог
+  // сдвинуться. Тихо перечитываем отчёт (кэш сервер уже сбросил).
+  if (live.price !== state.report.current.price) {
+    try {
+      const fresh = await fetch(`/api/report/${region}`).then((r) => r.json());
+      if (region === state.region && !fresh.empty) { state.report = fresh; render(); }
+    } catch { /* оставляем что есть */ }
+  }
 }
 
 async function reloadChart() {

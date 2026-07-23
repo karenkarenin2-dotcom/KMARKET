@@ -13,9 +13,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import config
+from datetime import datetime, timezone
+
+from .. import config, live
 from ..analytics import report as build_report
-from ..analytics.report import chart_data
+from ..analytics.report import chart_data, invalidate
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -46,3 +48,26 @@ def api_chart(region: str, days: int = 90) -> dict:
     _check_region(region)
     days = max(1, min(days, 100_000))
     return {"region": region, "days": days, **chart_data(region, days)}
+
+
+@app.get("/api/live/{region}")
+def api_live(region: str) -> dict:
+    """Текущая цена напрямую у Blizzard — для актуального заголовка.
+
+    Если пришла НОВАЯ точка (её не было в истории), сбрасываем кэш отчёта:
+    следующий /api/report пересчитает вердикт уже с ней.
+    """
+    _check_region(region)
+    price = live.current_price(region)
+    if price is None:
+        return {"region": region, "available": False}
+
+    now = datetime.now(timezone.utc)
+    invalidate(region)
+    return {
+        "region": region,
+        "available": True,
+        "price": price.gold,
+        "updated_utc": price.updated.isoformat(),
+        "age_minutes": round((now - price.updated).total_seconds() / 60),
+    }

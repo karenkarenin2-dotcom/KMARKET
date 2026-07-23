@@ -12,11 +12,40 @@
 from __future__ import annotations
 
 import socket
+import subprocess
 import threading
 import webbrowser
 
+from .. import config
+
 HOST = "127.0.0.1"  # только локально: наружу дашборд не смотрит
 PORT = 8765  # не 8000 — тот порт занят чем угодно на машине разработчика
+
+
+def _sync_history() -> None:
+    """Подтянуть свежую историю из облака перед стартом.
+
+    Сборщик пишет данные в GitHub, дашборд читает их с диска — без этого
+    подтягивания дашборд показывал бы историю на момент последнего pull.
+    Тихо и без фатальных последствий: нет git, нет сети, есть локальные
+    правки — просто работаем на том, что уже есть на диске. Живой запрос
+    цены (kmarket.live) всё равно освежит заголовок.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(config.ROOT), "pull", "--rebase", "--autostash"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print("[KMARKET] История не обновлена (git недоступен) — работаю на локальной копии.")
+        return
+    if result.returncode == 0:
+        line = (result.stdout or "").strip().splitlines()[-1:] or ["обновлено"]
+        print(f"[KMARKET] История актуальна: {line[0]}")
+    else:
+        print("[KMARKET] История не обновлена — работаю на локальной копии.")
 
 
 def _port_is_busy(host: str, port: int) -> bool:
@@ -34,6 +63,8 @@ def main() -> int:
         print(f"[KMARKET] Открываю {url} в браузере; второй сервер не нужен.")
         webbrowser.open(url)
         return 0
+
+    _sync_history()
 
     import uvicorn  # импорт здесь, чтобы проверка порта прошла до тяжёлой загрузки
 
