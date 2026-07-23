@@ -1,0 +1,58 @@
+name: alert
+
+# Проверка условий алерта и пуш в Telegram. Раз в час — не чаще: вердикт
+# на 90-дневном перцентиле меняется медленно, а покупателю впрок реагировать
+# в пределах часа более чем достаточно. Дедуп идёт ПО СОСТОЯНИЮ
+# (data/alert_state.json), поэтому частота крона на объём сообщений не влияет.
+#
+# Отдельно от collect.yml НАМЕРЕННО: вердикт требует pandas, а сборщик обязан
+# оставаться без зависимостей. Здесь pandas ставить не жалко — раз в час.
+on:
+  schedule:
+    - cron: "5 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Только показать, что ушло бы (без отправки)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # сохраняем состояние алертов в репозиторий
+
+concurrency:
+  group: alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Поставить только то, что нужно вердикту
+        run: pip install "pandas==2.2.3"
+
+      - name: Проверить условия и отправить
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m kmarket.alert ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Сохранить состояние алертов
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          if [ -z "$(git status --porcelain data/alert_state.json)" ]; then
+            echo "Состояние не изменилось — коммитить нечего."
+            exit 0
+          fi
+          git config user.name "kmarket-alerts"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/alert_state.json
+          git commit -m "alert: состояние на $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git pull --rebase --autostash
+          git push
