@@ -28,10 +28,26 @@ _DOTENV_LOADED = False
 
 
 def load_dotenv(path: Path | None = None) -> None:
-    """Подтягивает .env в os.environ, НЕ затирая уже заданные переменные.
+    """Подтягивает .env в os.environ. ФАЙЛ ПОБЕЖДАЕТ окружение.
 
     Свой парсер вместо python-dotenv: сборщик обязан работать на голом
     Python без единой зависимости.
+
+    ПОЧЕМУ ФАЙЛ ГЛАВНЕЕ (баг, пойманный 2026-07-23, стоил трёх сообщений,
+    ушедших чужому боту). Раньше здесь стоял `os.environ.setdefault`, то
+    есть системная переменная побеждала .env. У Карена в Windows оказалась
+    User-переменная TELEGRAM_BOT_TOKEN от совсем другого проекта
+    (бот-напоминалка о днях рождения) — и KMARKET молча слал алерты в чужой
+    чат. Токен из .env при этом был правильный, и по логам всё выглядело
+    исправным: sendMessage возвращал ok=true.
+
+    .env — это ЯВНАЯ конфигурация ЭТОГО проекта, а окружение — глобальная
+    свалка, куда что угодно мог положить любой другой проект. Поэтому файл
+    главнее. В CI .env не существует (он в .gitignore), там работают
+    GitHub Secrets через окружение — этот случай не затронут.
+
+    Расхождение не проглатываем молча: печатаем предупреждение, иначе
+    следующая такая коллизия снова будет искаться часами.
     """
     global _DOTENV_LOADED
     if _DOTENV_LOADED and path is None:
@@ -42,8 +58,16 @@ def load_dotenv(path: Path | None = None) -> None:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+            raw_key, _, raw_value = line.partition("=")
+            key = raw_key.strip()
+            value = raw_value.strip().strip("\"'")
+            existing = os.environ.get(key)
+            if existing is not None and existing != value:
+                print(
+                    f"[KMARKET] Внимание: переменная окружения {key} отличается от .env — "
+                    f"беру значение из .env (файл проекта главнее глобальной переменной)."
+                )
+            os.environ[key] = value
     _DOTENV_LOADED = True
 
 
