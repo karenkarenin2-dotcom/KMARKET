@@ -14,6 +14,7 @@ from __future__ import annotations
 import socket
 import subprocess
 import threading
+import time
 import webbrowser
 
 from .. import config
@@ -27,13 +28,20 @@ def _sync_history() -> None:
 
     Сборщик пишет данные в GitHub, дашборд читает их с диска — без этого
     подтягивания дашборд показывал бы историю на момент последнего pull.
-    Тихо и без фатальных последствий: нет git, нет сети, есть локальные
-    правки — просто работаем на том, что уже есть на диске. Живой запрос
-    цены (kmarket.live) всё равно освежит заголовок.
+
+    ТОЛЬКО --ff-only, НИКОГДА --rebase --autostash (урок 2026-07-26).
+    Прежний вариант с автозаначкой при неудачном возврате вписывал маркеры
+    конфликта ПРЯМО В ФАЙЛЫ ДАННЫХ, ломал историю и оставлял git в
+    состоянии `UU`. Запуск дашборда обязан быть безопасной операцией:
+    fast-forward либо ничего не делает, либо просто доматывает коммиты —
+    он физически не может тронуть рабочие файлы и что-то испортить.
+
+    Не удалось — не беда: работаем на локальной копии, а живой запрос цены
+    (kmarket.live) всё равно освежит заголовок.
     """
     try:
         result = subprocess.run(
-            ["git", "-C", str(config.ROOT), "pull", "--rebase", "--autostash"],
+            ["git", "-C", str(config.ROOT), "pull", "--ff-only"],
             capture_output=True,
             text=True,
             timeout=25,
@@ -42,10 +50,15 @@ def _sync_history() -> None:
         print("[KMARKET] История не обновлена (git недоступен) — работаю на локальной копии.")
         return
     if result.returncode == 0:
-        line = (result.stdout or "").strip().splitlines()[-1:] or ["обновлено"]
-        print(f"[KMARKET] История актуальна: {line[0]}")
+        tail = (result.stdout or "").strip().splitlines()
+        print(f"[KMARKET] История актуальна: {tail[-1] if tail else 'обновлений нет'}")
     else:
+        # Причину печатаем: молчаливое «не обновилось» уже однажды скрыло
+        # застрявший конфликт, и дашборд неделю показывал старые данные.
+        reason = (result.stderr or result.stdout or "").strip().splitlines()
         print("[KMARKET] История не обновлена — работаю на локальной копии.")
+        if reason:
+            print(f"[KMARKET]   причина: {reason[0]}")
 
 
 def _port_is_busy(host: str, port: int) -> bool:
@@ -53,6 +66,17 @@ def _port_is_busy(host: str, port: int) -> bool:
     with socket.socket() as probe:
         probe.settimeout(0.5)
         return probe.connect_ex((host, port)) == 0
+
+
+def _open_when_ready(url: str, timeout: float = 30.0) -> None:
+    """Открыть браузер, как только сервер начал принимать соединения."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _port_is_busy(HOST, PORT):  # порт занят НАМИ = сервер слушает
+            webbrowser.open(url)
+            return
+        time.sleep(0.25)
+    print(f"[KMARKET] Сервер не поднялся за {timeout:.0f} с — открой вручную: {url}")
 
 
 def main() -> int:
@@ -72,10 +96,11 @@ def main() -> int:
     print("[KMARKET] Первый расчёт занимает несколько секунд — считаются события и бэктест.")
     print("[KMARKET] Остановить: Ctrl+C или просто закрой это окно.")
 
-    # Браузер открываем с задержкой, чтобы сервер успел подняться.
-    # daemon=True — иначе таймер держал бы процесс живым после остановки.
-    opener = threading.Timer(1.5, lambda: webbrowser.open(url))
-    opener.daemon = True
+    # Браузер открываем, ДОЖДАВШИСЬ готовности порта, а не по таймеру.
+    # Прежние 1.5 секунды были угадыванием: на холодном старте uvicorn
+    # иногда ещё не слушал порт, браузер получал «не удалось подключиться»,
+    # и выглядело это как «скрипт не всегда открывает сайт».
+    opener = threading.Thread(target=_open_when_ready, args=(url,), daemon=True)
     opener.start()
 
     try:

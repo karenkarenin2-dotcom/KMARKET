@@ -27,9 +27,9 @@ HEADER = ("updated_utc", "price_copper")
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
-def month_file(region: str, moment: datetime) -> Path:
-    """data/history/eu/2026-07.csv"""
-    return config.HISTORY_DIR / region / f"{moment:%Y-%m}.csv"
+def month_file(region: str, moment: datetime, base: Path | None = None) -> Path:
+    """data/history/eu/2026-07.csv (или тот же путь внутри другой базы)."""
+    return (base or config.HISTORY_DIR) / region / f"{moment:%Y-%m}.csv"
 
 
 def _format(moment: datetime) -> str:
@@ -41,7 +41,15 @@ def _parse(value: str) -> datetime:
 
 
 def read_month(path: Path) -> dict[datetime, int]:
-    """Точки одного месяца: {момент UTC -> цена в меди}."""
+    """Точки одного месяца: {момент UTC -> цена в меди}.
+
+    ЛЮБАЯ нечитаемая строка пропускается молча. Это не лень, а требование
+    надёжности, оплаченное поломкой 2026-07-26: git оставил в файле данных
+    маркеры конфликта (`=======`, `>>>>>>> Stashed changes`), у таких строк
+    нет второго поля, `int(None)` бросил TypeError — и ОДНА битая строка
+    уронила весь дашборд целиком. Пропущенная точка стоит ничего, упавший
+    дашборд стоит вечера отладки; ловим и TypeError тоже.
+    """
     if not path.exists():
         return {}
     rows: dict[datetime, int] = {}
@@ -49,8 +57,8 @@ def read_month(path: Path) -> dict[datetime, int]:
         for row in csv.DictReader(handle):
             try:
                 rows[_parse(row["updated_utc"])] = int(row["price_copper"])
-            except (KeyError, ValueError):
-                continue  # битую строку пропускаем, сбор важнее строгости
+            except (KeyError, ValueError, TypeError):
+                continue
     return rows
 
 
@@ -65,9 +73,9 @@ def _write_month(path: Path, rows: dict[datetime, int]) -> None:
     temp.replace(path)  # атомарно: обрыв на полпути не оставит огрызок
 
 
-def append(price: TokenPrice) -> bool:
-    """Дописать замер. Возвращает True, если точка новая."""
-    path = month_file(price.region, price.updated)
+def append(price: TokenPrice, base: Path | None = None) -> bool:
+    """Дописать замер в историю (по умолчанию — в git-историю сборщика)."""
+    path = month_file(price.region, price.updated, base)
     rows = read_month(path)
     key = price.updated.astimezone(timezone.utc).replace(microsecond=0)
     if key in rows:
@@ -77,19 +85,38 @@ def append(price: TokenPrice) -> bool:
     return True
 
 
+def append_live(price: TokenPrice) -> bool:
+    """Дописать замер, снятый дашбордом, в ЛОКАЛЬНОЕ хранилище.
+
+    ПОЧЕМУ ОТДЕЛЬНО ОТ data/history (поломка 2026-07-26). Дашборд писал
+    живые цены прямо в git-историю, из-за чего рабочее дерево вечно было
+    «грязным». Автопулл при старте (`git pull --rebase --autostash`)
+    честно прятал эти правки в заначку, перебазировался и не мог вернуть
+    её обратно — и вписывал МАРКЕРЫ КОНФЛИКТА внутрь CSV. История ломалась,
+    дашборд падал, git застревал в состоянии `UU`.
+
+    Теперь у двух писателей два разных места: облачный сборщик владеет
+    data/history (коммитит его), дашборд пишет только в data/live (он в
+    .gitignore). Пересекаться им больше нечем, а при чтении обе части
+    склеиваются в load_history.
+    """
+    return append(price, base=config.LIVE_DIR)
+
+
 def load_history(region: str) -> list[tuple[datetime, int]]:
     """Вся история региона, отсортированная по времени.
 
-    Своя история (data/history) и внешний архив (data/archive) склеиваются;
-    при совпадении момента побеждают НАШИ данные — они точнее по времени.
+    Три источника, от менее точного к более точному: внешний архив
+    (разовый бутстрап) → history (замеры облачного сборщика) → live
+    (замеры, снятые дашбордом только что). При совпадении момента
+    побеждает последний, но значения там всё равно одинаковые: и сборщик,
+    и дашборд берут цену из одного и того же ответа Blizzard.
     """
     rows: dict[datetime, int] = {}
-    archive = config.ARCHIVE_DIR / region
-    if archive.exists():
-        for path in sorted(archive.glob("*.csv")):
-            rows.update(read_month(path))
-    own = config.HISTORY_DIR / region
-    if own.exists():
-        for path in sorted(own.glob("*.csv")):
+    for base in (config.ARCHIVE_DIR, config.HISTORY_DIR, config.LIVE_DIR):
+        directory = base / region
+        if not directory.exists():
+            continue
+        for path in sorted(directory.glob("*.csv")):
             rows.update(read_month(path))
     return [(moment, rows[moment]) for moment in sorted(rows)]

@@ -11,8 +11,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
-HISTORY_DIR = DATA_DIR / "history"  # наши собственные замеры
+HISTORY_DIR = DATA_DIR / "history"  # замеры облачного сборщика (в git)
 ARCHIVE_DIR = DATA_DIR / "archive"  # разовый бутстрап из внешнего источника
+# Замеры, снятые локальным дашбордом. НЕ в git (см. .gitignore): у git-истории
+# один владелец — облачный сборщик. Смешивание двух писателей в одном файле
+# 2026-07-26 привело к маркерам конфликта внутри данных, см. storage.append_live.
+LIVE_DIR = DATA_DIR / "live"
 
 # EU — основной регион. US собираем как ГИПОТЕЗУ об опережающем индикаторе:
 # часовые пояса сдвинуты, и если US-движение предсказывает EU — это сигнал,

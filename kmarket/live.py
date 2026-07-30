@@ -42,9 +42,11 @@ def current_price(region: str) -> TokenPrice | None:
         price = fetch_token_price(region, _access_token())
     except Exception:  # noqa: BLE001 — свежесть необязательна, молчим и живём дальше
         return None
-    # Дописываем в локальную историю: открытие дашборда = ещё одна точка.
+    # Дописываем в ЛОКАЛЬНОЕ хранилище (data/live, вне git): открытие
+    # дашборда = ещё одна точка. В git-историю писать нельзя — там хозяин
+    # облачный сборщик, см. storage.append_live.
     try:
-        storage.append(price)
+        storage.append_live(price)
     except OSError:
         pass  # не смогли записать — не беда, показать цену это не мешает
     return price

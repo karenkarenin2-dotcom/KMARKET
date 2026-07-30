@@ -36,13 +36,18 @@ from . import config, live
 API = "https://api.telegram.org/bot{token}/{method}"
 POLL_TIMEOUT = 30  # длинный опрос: соединение висит, пока нет событий
 
-# Слишком старые команды при ПЕРВОМ проходе игнорируем — отвечать на «/start»
-# трёхдневной давности только путает. Пороги разные по режимам, и это важно:
-# в интерактивном режиме «старое» = всё, что старше пары минут, а в режиме
-# --once под крон между запусками законно проходит целый интервал крона,
-# и с пятиминутным порогом бот молчал бы вообще на всё.
-STALE_INTERACTIVE = 300  # 5 минут
-STALE_ONCE = 7200  # 2 часа — с запасом на часовой крон
+# Порог «слишком старой» команды при ПЕРВОМ проходе.
+#
+# ЭТО БЫЛА ГЛАВНАЯ ПРИЧИНА «бот не работает» (2026-07-26). Порог стоял 5
+# минут — и получалось так: Карен жал команды, пока бот был выключен,
+# потом запускал бота, тот забирал сообщения из очереди, считал их
+# устаревшими и МОЛЧА выбрасывал. Со стороны — «нажимаю, ничего не
+# происходит», причём очередь опустошалась, так что и следов не оставалось.
+#
+# Теперь сутки: команда, отправленная пока бот спал, будет отвечена при
+# запуске — это ровно то, чего человек ждёт. И самое важное: пропуск
+# больше НЕ МОЛЧАЛИВЫЙ, в консоль печатается сколько и почему пропущено.
+STALE_SECONDS = 86_400  # сутки
 
 HELP = (
     "<b>KMARKET</b> — аналитика жетона WoW (EU)\n\n"
@@ -207,23 +212,63 @@ def _handle(update: dict) -> None:
     send(chat["id"], reply_for(text))
 
 
+def _announce() -> bool:
+    """Назвать себя в консоли и отметиться в чате. False — если бот не готов.
+
+    Раньше запуск был безмолвным, и отличить «бот работает, но не отвечает»
+    от «бот вообще не поднялся» было нельзя. Теперь видно И кто именно
+    запустился (ник важен: у Карена есть второй бот с похожим именем), И
+    что доставка в чат работает.
+    """
+    try:
+        me = _api("getMe").get("result", {})
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        print(f"[KMARKET] Telegram не отвечает: {error}", file=sys.stderr)
+        return False
+    username = me.get("username", "?")
+    print(f"[KMARKET] Бот @{username} (id {me.get('id')}) на связи.")
+
+    chat_id = config.optional("TELEGRAM_CHAT_ID")
+    if chat_id:
+        ok = send(chat_id, "🟢 <b>Бот KMARKET запущен</b>\nЖду команды: /price /verdict /season /events")
+        print(f"[KMARKET] Проверка чата: {'сообщение доставлено' if ok else 'НЕ ДОСТАВЛЕНО'}")
+    return True
+
+
 def run(once: bool = False) -> int:
     if not config.optional("TELEGRAM_BOT_TOKEN"):
         print("[KMARKET] Не задан TELEGRAM_BOT_TOKEN — боту нечем работать.", file=sys.stderr)
         return 1
+    if not _announce():
+        return 1
 
     offset = None
-    # На старте пропускаем всё, что накопилось раньше: отвечать на команды
-    # многодневной давности бессмысленно.
+    # На первом проходе выбрасываем совсем древние команды (см. STALE_SECONDS).
     fresh_only = True
 
-    print("[KMARKET] Бот слушает. Команды: /price /verdict /season /events")
+    print("[KMARKET] Слушаю команды. Остановить — Ctrl+C или закрыть окно.")
     while True:
         try:
             params = {"timeout": 0 if once else POLL_TIMEOUT}
             if offset is not None:
                 params["offset"] = offset
             result = _api("getUpdates", **params)
+        except urllib.error.HTTPError as error:
+            # 409 = того же бота уже опрашивает другой процесс. Частый случай:
+            # KMARKET_BOT.bat запущен дважды. Без явного сообщения человек
+            # видел бы бесконечный поток непонятных ошибок.
+            if error.code == 409:
+                print(
+                    "[KMARKET] Этого бота уже слушает другая копия.\n"
+                    "[KMARKET] Закрой лишнее окно KMARKET_BOT — двум сразу Telegram работать не даёт.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"[KMARKET] Опрос не удался: HTTP {error.code}", file=sys.stderr)
+            if once:
+                return 1
+            time.sleep(5)
+            continue
         except (urllib.error.URLError, TimeoutError, ValueError) as error:
             print(f"[KMARKET] Опрос не удался: {error}", file=sys.stderr)
             if once:
@@ -233,13 +278,16 @@ def run(once: bool = False) -> int:
 
         updates = result.get("result", [])
         now = time.time()
-        limit = STALE_ONCE if once else STALE_INTERACTIVE
+        skipped = 0
         for update in updates:
             offset = update["update_id"] + 1
             sent_at = (update.get("message") or {}).get("date") or now
-            if fresh_only and now - sent_at > limit:
-                continue  # старьё просто подтверждаем и забываем
+            if fresh_only and now - sent_at > STALE_SECONDS:
+                skipped += 1  # подтверждаем и забываем, но НЕ молча (см. ниже)
+                continue
             _handle(update)
+        if skipped:
+            print(f"[KMARKET] Пропущено старых команд (больше суток): {skipped}")
         fresh_only = False
 
         if once:
