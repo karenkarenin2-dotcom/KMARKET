@@ -1,8 +1,8 @@
 {
   "eu": {
-    "verdict": "avoid",
+    "verdict": "wait",
     "deep_bottom": false,
     "events_notified": []
   },
-  "_updated": "2026-07-31T13:02:40.925009+00:00"
+  "_updated": "2026-07-31T15:25:35.408915+00:00"
 }
