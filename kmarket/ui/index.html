@@ -68,7 +68,10 @@
     </div>
 
     <div class="card">
-      <div class="label">Цена</div>
+      <div class="chart-head">
+        <span class="label">Цена</span>
+        <span class="readout" id="probe-readout" hidden></span>
+      </div>
       <svg class="chart" id="chart" preserveAspectRatio="none"></svg>
       <div class="ranges" id="ranges">
         <button class="range" data-days="30">30 дн</button>
@@ -85,7 +88,10 @@
   <section class="view" data-view="auction">
 
     <div class="card" id="auction-note">
-      <div class="label">Товарный аукцион EU</div>
+      <div class="chart-head">
+        <span class="label">Товарный аукцион EU</span>
+        <button class="range" id="a-refresh">обновить</button>
+      </div>
       <div class="note" id="a-note">Загружаю…</div>
     </div>
 
