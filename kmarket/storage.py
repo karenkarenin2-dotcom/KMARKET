@@ -103,6 +103,117 @@ def append_live(price: TokenPrice) -> bool:
     return append(price, base=config.LIVE_DIR)
 
 
+# --------------------------------------------------------------------------
+# Аукцион. Устройство то же, что у жетона (месячный CSV, атомарная замена,
+# дедупликация по времени Blizzard), но ключ составной: в одном снимке
+# приходят десятки предметов, и точку задаёт пара (момент, предмет).
+# --------------------------------------------------------------------------
+
+AUCTION_HEADER = (
+    "updated_utc",
+    "item_id",
+    "floor_copper",
+    "market_copper",
+    "quantity",
+    "lots",
+    "deal_qty",
+    "deal_cost",
+)
+
+AuctionKey = tuple[datetime, int]
+# floor, market, quantity, lots, deal_qty, deal_cost
+AuctionRow = tuple[int, int, int, int, int, int]
+
+
+def auction_month_file(region: str, moment: datetime) -> Path:
+    """data/auction/eu/2026-08.csv"""
+    return config.AUCTION_DIR / region / f"{moment:%Y-%m}.csv"
+
+
+def read_auction_month(path: Path) -> dict[AuctionKey, AuctionRow]:
+    """Точки одного месяца. Битая строка пропускается молча — см. read_month."""
+    if not path.exists():
+        return {}
+    rows: dict[AuctionKey, AuctionRow] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            try:
+                key = (_parse(row["updated_utc"]), int(row["item_id"]))
+                rows[key] = (
+                    int(row["floor_copper"]),
+                    int(row["market_copper"]),
+                    int(row["quantity"]),
+                    int(row["lots"]),
+                    # Поля добавлены позже: у ранних строк их нет, и падать
+                    # из-за этого нельзя — история дороже полноты колонок.
+                    int(row.get("deal_qty") or 0),
+                    int(row.get("deal_cost") or 0),
+                )
+            except (KeyError, ValueError, TypeError):
+                continue
+    return rows
+
+
+def _write_auction_month(path: Path, rows: dict[AuctionKey, AuctionRow]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".csv.tmp")
+    with temp.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(AUCTION_HEADER)
+        for moment, item_id in sorted(rows):
+            writer.writerow([_format(moment), item_id, *rows[(moment, item_id)]])
+    temp.replace(path)
+
+
+def append_auction(snapshot, item_ids: list[int]) -> int:
+    """Дописать снимок по списку слежки. Возвращает число новых строк.
+
+    Снимок целиком не пишем никогда: в нём 12 тысяч предметов, а нужны
+    десятки (см. watchlist). Фильтрация здесь, а не в auction.fetch,
+    чтобы свежий снимок оставался пригодным для пересбора списка.
+    """
+    path = auction_month_file(snapshot.region, snapshot.updated)
+    rows = read_auction_month(path)
+    moment = snapshot.updated.astimezone(timezone.utc).replace(microsecond=0)
+
+    added = 0
+    for item_id in item_ids:
+        quote = snapshot.quotes.get(item_id)
+        if quote is None:
+            continue  # предмет пропал с аукциона — это не ошибка, а факт
+        key = (moment, item_id)
+        if key in rows:
+            continue
+        rows[key] = (
+            quote.floor,
+            quote.market,
+            quote.quantity,
+            quote.lots,
+            quote.deal_qty,
+            quote.deal_cost,
+        )
+        added += 1
+
+    if added:
+        _write_auction_month(path, rows)
+    return added
+
+
+def load_auction(region: str, item_id: int | None = None) -> list[tuple]:
+    """История аукциона региона: [(момент, предмет, пол, рынок, кол-во, лоты), ...]."""
+    directory = config.AUCTION_DIR / region
+    if not directory.exists():
+        return []
+    rows: dict[AuctionKey, AuctionRow] = {}
+    for path in sorted(directory.glob("*.csv")):
+        rows.update(read_auction_month(path))
+    return [
+        (moment, item, *rows[(moment, item)])
+        for moment, item in sorted(rows)
+        if item_id is None or item == item_id
+    ]
+
+
 def load_history(region: str) -> list[tuple[datetime, int]]:
     """Вся история региона, отсортированная по времени.
 
