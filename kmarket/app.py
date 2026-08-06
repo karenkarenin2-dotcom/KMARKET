@@ -23,6 +23,7 @@ api.get_auction(), возвращаемое значение сериализу�
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import threading
 import traceback
@@ -30,7 +31,7 @@ from pathlib import Path
 
 import webview
 
-from . import __version__, config, live
+from . import __version__, auction, blizzard, config, live
 from .analytics import auction as auction_analytics
 from .analytics.report import chart_data, invalidate, report
 
@@ -116,11 +117,49 @@ class Api:
             _emit({"type": "error", "text": f"Не удалось собрать отчёт: {error}"})
             return
 
+        self._load_auction(region)
+
+    def _load_auction(self, region: str) -> None:
+        """Свежий снимок аукциона прямо у Blizzard, а не из сохранённого CSV.
+
+        ПОЧЕМУ ЖИВОЙ ЗАПРОС. Сохранённая история наполняется облачным
+        сборщиком раз в час и попадает на диск только после `git pull`.
+        Показывать её как «цену на аукционе» значило бы врать на часы:
+        человек смотрит на экран, идёт в игру, а там уже другие цены.
+        Жетон мы по этой же причине спрашиваем живьём с самого начала.
+
+        Снимок весит 2.9 МБ и разбирается пару секунд — поэтому только в
+        потоке и только по событию, а не при каждом переключении вкладки.
+        """
         try:
-            self._auction_cache = auction_analytics.summary(region)
-            _emit({"type": "auction-ready", "tracked": self._auction_cache["tracked"]})
+            snapshot = auction.fetch(region, blizzard.get_access_token())
+            self._auction_cache = auction_analytics.summary(
+                region, live=snapshot.quotes
+            )
+            self._auction_cache["live_utc"] = snapshot.updated.isoformat()
+            _emit(
+                {
+                    "type": "auction-ready",
+                    "tracked": self._auction_cache["tracked"],
+                    "live_utc": snapshot.updated.isoformat(),
+                }
+            )
         except Exception as error:  # noqa: BLE001
-            _emit({"type": "note", "text": f"Аукцион недоступен: {error}"})
+            # Живьём не вышло — показываем то, что накопил сборщик, но
+            # честно помечаем это как несвежее.
+            try:
+                self._auction_cache = auction_analytics.summary(region)
+                self._auction_cache["stale"] = True
+                _emit({"type": "auction-ready", "tracked": self._auction_cache["tracked"]})
+            except Exception:  # noqa: BLE001
+                _emit({"type": "note", "text": f"Аукцион недоступен: {error}"})
+
+    def refresh_auction(self, region: str) -> bool:
+        """Кнопка «обновить» на вкладке аукциона."""
+        threading.Thread(
+            target=self._load_auction, args=(region,), daemon=True
+        ).start()
+        return True
 
     # -- данные по запросу --------------------------------------------------
     def get_chart(self, region: str, days: int) -> dict:
@@ -132,6 +171,42 @@ class Api:
     def get_auction(self) -> dict:
         """Крупные данные — возвращаемым значением, не через evaluate_js."""
         return self._auction_cache or {"items": [], "bargains": [], "tracked": 0}
+
+
+# Потолок кэша WebView2. Один сеанс набирает 30–70 МБ (замерено), и без
+# подрезки папка растёт от запуска к запуску без всякого предела.
+CACHE_LIMIT_MB = 120
+
+
+def _cache_size_mb(path: Path) -> float:
+    total = 0
+    for item in path.rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:
+            continue  # файл держит вебвью — не наше дело
+    return total / 1024 / 1024
+
+
+def _trim_cache() -> None:
+    """Снести кэш целиком, если он перерос потолок.
+
+    Именно целиком, а не выборочно: WebView2 сам разберётся, что ему
+    нужно, и заново скачает недостающее. Выборочная чистка внутри чужого
+    кэша — это способ получить непредсказуемо сломанный движок.
+
+    Мягко: занятый файл не повод ронять запуск, останется до следующего
+    раза (тот же приём, что в KFRAME/tidy.rs).
+    """
+    try:
+        if _cache_size_mb(config.CACHE_DIR) < CACHE_LIMIT_MB:
+            return
+        shutil.rmtree(config.CACHE_DIR, ignore_errors=True)
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"[KMARKET] Кэш WebView2 перерос {CACHE_LIMIT_MB} МБ — очищен.")
+    except OSError:
+        pass
 
 
 def main() -> int:
@@ -151,8 +226,22 @@ def main() -> int:
         text_select=True,
     )
 
+    # ПОЧЕМУ private_mode=False И СВОЙ storage_path (замерено 2026-08-07).
+    # По умолчанию pywebview включает приватный режим и на КАЖДЫЙ запуск
+    # заводит новую папку кэша WebView2 в %TEMP%\tmp*, а при выходе её не
+    # удаляет. На машине набралось девять брошенных папок на 106 МБ, из
+    # них два сеанса KMARKET — 30 и 69 МБ. Со своей постоянной папкой
+    # кэш один на все запуски, и мы можем сами его подрезать.
+    config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _trim_cache()
+
     try:
-        webview.start(gui="edgechromium", debug="--debug" in sys.argv)
+        webview.start(
+            gui="edgechromium",
+            debug="--debug" in sys.argv,
+            private_mode=False,
+            storage_path=str(config.CACHE_DIR),
+        )
     except Exception:
         traceback.print_exc()
         print(

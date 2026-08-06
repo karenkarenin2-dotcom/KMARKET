@@ -190,7 +190,67 @@ async function drawChart() {
     <path class="line" d="${d}"/>
     <text x="${W - padR + 6}" y="${y(hi) + 4}">${gold(hi)}</text>
     <text x="${W - padR + 6}" y="${y(lo) + 4}">${gold(lo)}</text>
+    <g id="probe" style="display:none">
+      <line class="probe-line" y1="${padY}" y2="${H - padY}"/>
+      <circle class="probe-dot" r="3"/>
+    </g>
   `;
+
+  // Читаем точное значение под курсором. Держим данные и пересчёт
+  // координат прямо здесь: искать ближайшую точку надо в тех же
+  // единицах, в которых её нарисовали, иначе подпись разъедется с линией.
+  state.probe = { points: res.points, x, y, W, H, padL, padR };
+  bindProbe();
+}
+
+/* Наведение на график: крестик, точка и значение.
+ *
+ * viewBox растянут на всю ширину карточки, поэтому экранные пиксели надо
+ * переводить в координаты viewBox — отсюда пересчёт через getBoundingClientRect,
+ * а не прямое использование offsetX. */
+function bindProbe() {
+  const svg = $("#chart");
+  const box = $("#probe-readout");
+  if (svg.dataset.bound) return;
+  svg.dataset.bound = "1";
+
+  svg.addEventListener("mousemove", (e) => {
+    const p = state.probe;
+    if (!p || !p.points.length) return;
+    const rect = svg.getBoundingClientRect();
+    const vx = ((e.clientX - rect.left) / rect.width) * p.W;
+
+    // Ближайшая точка по горизонтали.
+    const usable = p.W - p.padL - p.padR;
+    let idx = Math.round(((vx - p.padL) / usable) * (p.points.length - 1));
+    idx = Math.max(0, Math.min(p.points.length - 1, idx));
+
+    const [when, price] = p.points[idx];
+    const px = p.x(idx);
+    const py = p.y(price);
+
+    const probe = svg.querySelector("#probe");
+    probe.style.display = "";
+    probe.querySelector("line").setAttribute("x1", px);
+    probe.querySelector("line").setAttribute("x2", px);
+    probe.querySelector("circle").setAttribute("cx", px);
+    probe.querySelector("circle").setAttribute("cy", py);
+
+    const when_ = new Date(when);
+    const long = state.days >= 45;
+    box.textContent =
+      when_.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) +
+      (long ? "" : ", " + when_.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })) +
+      " — " + gold(price) + " g" +
+      (long ? " (медиана за день)" : "");
+    box.hidden = false;
+  });
+
+  svg.addEventListener("mouseleave", () => {
+    const probe = svg.querySelector("#probe");
+    if (probe) probe.style.display = "none";
+    box.hidden = true;
+  });
 }
 
 /* ---------- аукцион ---------- */
@@ -213,8 +273,17 @@ function renderAuction(data) {
   }
 
   const ev = data.event;
+  const when = data.live_utc
+    ? "Цены на " +
+      new Date(data.live_utc).toLocaleString("ru-RU", {
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+      }) +
+      " — так их отдаёт Blizzard, обновляются раз в час."
+    : data.stale
+    ? "Живой снимок не получен, показываю последний сохранённый."
+    : "";
   note.textContent =
-    `Под слежкой ${data.tracked} товаров. Окно сравнения ${data.window_days} дн.` +
+    `${when} Под слежкой ${data.tracked} товаров.` +
     (ev
       ? ` Ближайшее событие: ${ev.label}, ${
           ev.days > 0 ? "через " + ev.days + " дн" : Math.abs(ev.days) + " дн назад"
@@ -231,11 +300,16 @@ function renderAuction(data) {
   $("#a-rows").innerHTML = headRow() + data.items.map(row).join("");
 }
 
+/* Подписи колонок намеренно НЕ жаргонные. «Пол» и «уровень» — слова из
+ * биржевого стакана, и на вопрос «это цена или не цена?» они не отвечают.
+ * Пишем то, что человек увидит в игре. */
 function headRow() {
   return `<div class="row head">
     <span></span><span>Товар</span>
-    <span class="num">Пол</span><span class="num">Уровень</span>
-    <span class="num">Вложить</span><span class="num">Вернуть</span>
+    <span class="num" title="Цена самого дешёвого лота — столько стоит купить одну штуку прямо сейчас">Цена сейчас</span>
+    <span class="num" title="Цена, к которой вернётся прилавок, когда дешёвые лоты разберут">Цена после</span>
+    <span class="num" title="Сколько золота нужно, чтобы скупить все лоты дешевле «цены после»">Скупить всё</span>
+    <span class="num" title="Сколько останется чистыми, если перепродать скупленное по «цене после», за вычетом комиссии аукциона 5%">Навар</span>
     <span class="state">Совет</span>
   </div>`;
 }
@@ -264,6 +338,12 @@ function row(it) {
   </div>`;
 }
 
+$("#a-refresh").addEventListener("click", async () => {
+  $("#a-note").textContent = "Спрашиваю Blizzard…";
+  state.auction = null;
+  await window.pywebview.api.refresh_auction(state.region);
+});
+
 /* ---------- события из Python ---------- */
 
 window.kmarket = {
@@ -276,6 +356,7 @@ window.kmarket = {
       state.ready = true;
     } else if (event.type === "auction-ready") {
       state.auction = null; // пересобрать при следующем открытии вкладки
+      state.ready = true;
       if ($('.view[data-view="auction"]').classList.contains("is-on")) loadAuction();
     } else if (event.type === "note") {
       $("#a-note").textContent = event.text;
