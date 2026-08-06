@@ -28,11 +28,13 @@ import pandas as pd
 PREPATCH = "prepatch"
 LAUNCH = "launch"
 SEASON = "season"
+CONTENT = "content"
 
 KIND_TITLES = {
     PREPATCH: "Пре-патч",
     LAUNCH: "Запуск дополнения",
     SEASON: "Старт сезона",
+    CONTENT: "Крупный патч",
 }
 
 
@@ -68,6 +70,11 @@ EVENTS: tuple[Event, ...] = (
     Event("Midnight: пре-патч", "2026-01-20", PREPATCH),
     Event("Midnight: запуск", "2026-03-02", LAUNCH),
     Event("Midnight: сезон 1", "2026-03-17", SEASON),
+    # Патч 12.1 «Curse of Ula'tek». Blizzard объявила 11 августа для NA;
+    # в EU контент открывается на сутки позже, а нас интересует ИМЕННО EU —
+    # это основной регион, и цена жетона там живёт по своему расписанию.
+    Event("Midnight: патч 12.1", "2026-08-12", CONTENT),
+    Event("Midnight: сезон 2", "2026-08-18", SEASON),
 )
 
 BEFORE_DAYS = 30
@@ -125,31 +132,43 @@ def context(now: pd.Timestamp | None = None, horizon: int = 30) -> dict | None:
     (−11.8% за 8..30 дней после). Значит фаза важнее любого перцентиля:
     «дёшево» за неделю до запуска и «дёшево» через месяц после — это
     совершенно разные «дёшево».
+
+    ВЫБОР СОБЫТИЯ ИДЁТ ПО ОСТОРОЖНОСТИ, А НЕ ПО БЛИЗОСТИ. Раньше здесь
+    побеждало ближайшее по модулю, и на плотном календаре это давало прямо
+    неверный совет: 12.1 выходит 12 августа, сезон 2 — 18-го. Четырнадцатого
+    числа патч позади на два дня, сезон впереди на четыре, ближайшим по
+    модулю оказывается патч — и фаза объявлялась «уже случилось, цена
+    начинает оседать», хотя на деле рынок ещё разогревается перед сезоном.
+    Пока впереди есть событие внутри горизонта, оно и главное; прошедшие
+    смотрим, только когда впереди пусто.
     """
     now = now or pd.Timestamp.now(tz="UTC")
-    nearest: dict | None = None
+    found: list[dict] = []
     for event in EVENTS:
         moment = pd.Timestamp(event.date, tz="UTC")
-        days = (moment.normalize() - now.normalize()).days
+        days = (moment.normalize() - now.normalize()).days  # >0 впереди, <0 позади
         if abs(days) > horizon:
             continue
-        if nearest is None or abs(days) < abs(nearest["days"]):
-            nearest = {
+        if days > 0:
+            phase = "before"  # цена обычно повышенная и растёт
+        elif days >= -7:
+            phase = "just_happened"  # перелом
+        else:
+            phase = "after"  # цена обычно оседает
+        found.append(
+            {
                 "label": event.label,
                 "date": event.date,
                 "kind": event.kind,
-                "days": days,  # >0 — событие впереди, <0 — уже прошло
+                "days": days,
+                "phase": phase,
             }
-    if nearest is None:
+        )
+    if not found:
         return None
-    days = nearest["days"]
-    if days > 0:
-        nearest["phase"] = "before"  # цена обычно повышенная и растёт
-    elif days >= -7:
-        nearest["phase"] = "just_happened"  # перелом
-    else:
-        nearest["phase"] = "after"  # цена обычно оседает
-    return nearest
+    # Сначала по осторожности фазы, внутри фазы — ближайшее.
+    order = {"before": 0, "just_happened": 1, "after": 2}
+    return min(found, key=lambda e: (order[e["phase"]], abs(e["days"])))
 
 
 def _curves(daily: pd.Series, kind: str | None) -> list[dict[int, float]]:

@@ -30,7 +30,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .events import CONTENT as CONTENT_KIND
 from .events import LAUNCH as LAUNCH_KIND
+from .events import PREPATCH as PREPATCH_KIND
+from .events import SEASON as SEASON_KIND
 from .percentile import CONTEXT_WINDOW, DECISION_WINDOW, Trend, WindowStats
 
 BUY = "buy"
@@ -89,6 +92,18 @@ def _confidence(decision: WindowStats | None, gap_hours: float | None) -> str:
     return "высокая"
 
 
+# Измеренный размах по типам событий (events.study на всей истории EU):
+# насколько цена задрана за 30..8 дней ДО и просела за 8..30 дней ПОСЛЕ.
+# Ключ CONTENT намеренно пуст: отдельных крупных патчей в EVENTS пока один
+# (12.1), мерить не на чем, и подписывать ему чужие проценты нельзя —
+# выдуманная точность хуже честного «эффект не измерен».
+EVENT_MAGNITUDE: dict[str, tuple[str, str]] = {
+    LAUNCH_KIND: ("+12%", "−12%"),
+    SEASON_KIND: ("+7%", "−5%"),
+    PREPATCH_KIND: ("+1%", "−3%"),
+}
+
+
 def _event_reason(event: dict) -> tuple[str, str | None]:
     """Что говорит фаза игрового события. Возвращает (текст, сдвиг вердикта).
 
@@ -96,25 +111,42 @@ def _event_reason(event: dict) -> tuple[str, str | None]:
     сигнал из всех, что мы нашли: вокруг запуска дополнения размах 30%,
     против 11% у стратегии перцентилей. Поэтому фаза события имеет право
     перебивать перцентиль — но только в сторону осторожности.
+
+    Направление одинаково у ВСЕХ измеренных типов (до — дорого, после —
+    дёшево), поэтому неизмеренный тип двигает вердикт так же, просто без
+    называния процентов.
     """
     days, kind = event["days"], event["kind"]
-    strong = kind == LAUNCH_KIND
+    before_pct, after_pct = EVENT_MAGNITUDE.get(kind, ("", ""))
+
     if event["phase"] == "before":
-        text = (
-            f"Через {days} дн — {event['label']}. Перед такими событиями цена "
-            f"исторически задрана ({'+12%' if strong else '+7%'} за месяц до) "
-            f"и падает после. Запасаться сейчас — покупать на локальном пике."
+        measured = (
+            f"Перед такими событиями цена исторически задрана ({before_pct} за месяц до) "
+            f"и падает после."
+            if before_pct
+            else (
+                "Отдельно эффект патчей такого рода мы ещё не измеряли — их в истории "
+                "накоплен всего один. Но направление у всех событий одинаковое: до — дорого, "
+                "после — дёшево."
+            )
         )
-        return text, AVOID
+        return (
+            f"Через {days} дн — {event['label']}. {measured} "
+            f"Запасаться сейчас — покупать на локальном пике.",
+            AVOID,
+        )
+
     if event["phase"] == "just_happened":
         return (
             f"{event['label']} — {abs(days)} дн назад. Обычно с этого момента "
             f"цена начинает оседать; спешить не нужно.",
             WAIT,
         )
+
+    tail = f" ({after_pct} к уровню вокруг события)" if after_pct else ""
     return (
         f"{event['label']} прошло {abs(days)} дн назад — исторически это фаза "
-        f"низких цен ({'−12%' if strong else '−5%'} к уровню вокруг события).",
+        f"низких цен{tail}.",
         None,
     )
 

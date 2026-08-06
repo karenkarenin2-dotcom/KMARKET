@@ -27,12 +27,22 @@ def _local(moment: pd.Timestamp) -> str:
     return moment.tz_convert(config.LOCAL_TZ).isoformat()
 
 
+# За сколько дней график перестаёт быть интрадей-графиком. Дальше этого
+# горизонта показываем дневную медиану: жетон колеблется внутри суток на
+# несколько процентов, и на 90 днях сырые точки превращаются в сплошную
+# гребёнку, по которой не прочесть ни уровня, ни тренда. Проверено
+# глазами на первом же снимке экрана.
+DAILY_FROM_DAYS = 45
+
+
 def chart_data(region: str, days: int, max_points: int = 900) -> dict:
     """Точки графика в МЕСТНОМ времени плюс попавшие в диапазон события."""
     chunk = frame.window(frame.load(region), days)
     if chunk.empty:
         return {"points": [], "events": []}
     marks = events.in_range(chunk.index[0], chunk.index[-1])
+    if days >= DAILY_FROM_DAYS:
+        chunk = chunk.resample("1D").median().dropna()
     if len(chunk) > max_points:
         chunk = chunk.iloc[:: len(chunk) // max_points + 1]
     local = chunk.tz_convert(config.LOCAL_TZ)

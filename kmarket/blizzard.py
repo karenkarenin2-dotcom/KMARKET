@@ -13,6 +13,7 @@ KMARKET стоит на том, что историю мы копим сами �
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import time
 import urllib.error
@@ -20,12 +21,15 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 from . import __version__, config
 
 OAUTH_URL = "https://oauth.battle.net/token"
-USER_AGENT = f"KMARKET/{__version__} (KareninTeam; WoW Token tracker)"
+USER_AGENT = f"KMARKET/{__version__} (KareninTeam; WoW market tracker)"
 TIMEOUT = 30
+# Снимок аукциона — это десятки мегабайт, ему мало тридцати секунд.
+BIG_TIMEOUT = 180
 COPPER_PER_GOLD = 10_000
 
 
@@ -42,27 +46,105 @@ class TokenPrice:
         return self.price_copper // COPPER_PER_GOLD
 
 
+def _http_raw(
+    url: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    attempts: int = 3,
+    timeout: int = TIMEOUT,
+) -> tuple[bytes, dict[str, str]]:
+    """GET/POST с ретраями. Возвращает (тело, заголовки).
+
+    ДВЕ ГРАБЛИ ПРО GZIP, обе проверены на живом ответе 2026-08-06.
+
+    Первая: urllib НЕ шлёт `Accept-Encoding: gzip` сам. Для жетона это
+    безразлично, но снимок аукциона без сжатия весит 24.8 МБ против 2.9 МБ
+    сжатого — восьмикратная разница на каждом часовом запуске.
+
+    Вторая: попросив gzip, распаковывать придётся ТОЖЕ САМОМУ — urllib
+    отдаёт тело как есть. Причём Blizzard кладёт заголовок в нижнем
+    регистре (`content-encoding`), а `http.client` складывает заголовки в
+    регистронезависимый словарь, но `dict(response.headers)` эту
+    любезность теряет. Поэтому опознаём сжатие не по заголовку, а по
+    сигнатуре `1f 8b` в первых двух байтах — она не врёт никогда.
+
+    Ретраи обязательны: самый первый же наш запрос к commodities вернул
+    случайный HTTP 500, повтор через две секунды прошёл нормально.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept-Encoding": "gzip",
+                **(headers or {}),
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read()
+                meta = {key.lower(): value for key, value in response.headers.items()}
+            if body[:2] == b"\x1f\x8b":
+                body = gzip.decompress(body)
+            return body, meta
+        except urllib.error.HTTPError as error:
+            # 4xx — это ответ, а не сбой: повторять его бессмысленно.
+            # Особенно важно для 404: справочник намеренно пробует
+            # несуществующие соседние ID, и с ретраями каждая такая проба
+            # стоила бы 6 секунд сна на ровном месте (2с + 4с). Один раз
+            # это уже подвесило сборку списка слежки.
+            # 429 — исключение: «слишком часто» лечится именно паузой.
+            if 400 <= error.code < 500 and error.code != 429:
+                raise
+            last_error = error
+            if attempt < attempts:
+                time.sleep(2**attempt)
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:
+            last_error = error
+            if attempt < attempts:
+                time.sleep(2**attempt)  # 2с, 4с — Blizzard иногда моргает
+    raise RuntimeError(f"Запрос к {url} не удался после {attempts} попыток: {last_error}")
+
+
 def _http_json(
     url: str,
     *,
     data: bytes | None = None,
     headers: dict[str, str] | None = None,
     attempts: int = 3,
+    timeout: int = TIMEOUT,
 ) -> dict:
-    """GET/POST с ретраями. Сетевой сбой не должен ронять сбор целиком."""
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        request = urllib.request.Request(
-            url, data=data, headers={"User-Agent": USER_AGENT, **(headers or {})}
-        )
+    body, _ = _http_raw(
+        url, data=data, headers=headers, attempts=attempts, timeout=timeout
+    )
+    return json.loads(body.decode("utf-8"))
+
+
+def _http_json_dated(
+    url: str, *, headers: dict[str, str] | None = None, timeout: int = TIMEOUT
+) -> tuple[dict, datetime | None]:
+    """То же, но ещё и время из `Last-Modified` — им дедуплицируем снимки.
+
+    Для аукциона это ровно то же решение, что `updated_utc` для жетона:
+    ключом служит время САМОЙ Blizzard, а не время нашего опроса. Иначе
+    один и тот же часовой снимок, пойманный двумя запусками, лёг бы в
+    историю двумя разными точками.
+    """
+    body, meta = _http_raw(url, headers=headers, timeout=timeout)
+    stamp = meta.get("last-modified")
+    moment: datetime | None = None
+    if stamp:
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, ValueError) as error:
-            last_error = error
-            if attempt < attempts:
-                time.sleep(2**attempt)  # 2с, 4с — Blizzard иногда моргает
-    raise RuntimeError(f"Запрос к {url} не удался после {attempts} попыток: {last_error}")
+            # Свой разбор писать нельзя: Blizzard шлёт день без ведущего
+            # нуля («Thu, 6 Aug 2026 20:41:27 GMT»). parsedate_to_datetime —
+            # штатный разборщик RFC 2822, ему такое привычно.
+            moment = parsedate_to_datetime(stamp).astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            moment = None
+    return json.loads(body.decode("utf-8")), moment
 
 
 def get_access_token() -> str:

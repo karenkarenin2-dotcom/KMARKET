@@ -1,0 +1,94 @@
+name: auction
+
+# Сбор товарного аукциона (commodities).
+#
+# ОТДЕЛЬНО ОТ СБОРЩИКА ЖЕТОНА — намеренно. У аукциона свой такт: Blizzard
+# пересчитывает commodities раз в ЧАС, жетон — раз в 20 минут. В одном
+# workflow пришлось бы либо качать 3 МБ каждые десять минут впустую, либо
+# проредить жетон. Разные такты — разные расписания и разные файлы.
+#
+# Окно опроса здесь по той же причине, что и у жетона: крон Actions
+# исполняется раз в 1–3 часа вместо заказанного, и для часовых данных это
+# прямые пропуски снимков.
+on:
+  schedule:
+    - cron: "7,37 * * * *" # смещение от нуля: в начале часа планировщик загружен сильнее
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auction # своя группа: аукцион не должен глушить сбор жетона
+  cancel-in-progress: false
+
+jobs:
+  auction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Никакого pip: сборщик на голой стандартной библиотеке.
+      - name: Снимать аукцион целое окно
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: |
+          set -u
+          git config user.name "kmarket-collector"
+          git config user.email "actions@users.noreply.github.com"
+
+          end=$(( $(date -u +%s) + 55 * 60 ))
+          rc=0
+
+          while [ "$(date -u +%s)" -lt "$end" ]; do
+            # Отрезок ~20 минут: два снимка с шагом 10 минут. Чаще незачем,
+            # данные обновляются раз в час, а снимок весит 2.9 МБ.
+            python -m kmarket.collect_auction --minutes 25 --interval 600 || rc=$?
+
+            if [ -n "$(git status --porcelain data)" ]; then
+              git add data
+              git commit -m "auction: $(date -u '+%Y-%m-%d %H:%M') UTC"
+              git pull --rebase
+              git push
+            else
+              echo "Снимок не обновился — коммитить нечего."
+            fi
+          done
+
+          exit $rc
+
+  # Список слежки пересобирается раз в месяц: топ ликвидности меняется
+  # после патчей, и новые реагенты должны подхватываться сами. Держим в
+  # этом же файле, чтобы всё про аукцион лежало в одном месте.
+  watchlist:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Пересобрать список слежки
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: python -m kmarket.watchlist
+      - name: Закоммитить список
+        run: |
+          if [ -z "$(git status --porcelain data)" ]; then
+            echo "Список не изменился."
+            exit 0
+          fi
+          git config user.name "kmarket-collector"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git commit -m "watchlist: $(date -u '+%Y-%m-%d') UTC"
+          git pull --rebase
+          git push

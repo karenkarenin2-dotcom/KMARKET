@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "kmarket",
+      "name": "ui-stand",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "kmarket.web.app:app", "--host", "127.0.0.1", "--port", "8765"],
+      "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1"],
       "port": 8765
     }
   ]
