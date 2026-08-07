@@ -312,13 +312,27 @@ def wide_due(region: str, moment: datetime, every_hours: float) -> bool:
     return (moment - max(seen)).total_seconds() >= every_hours * 3600 - 300
 
 
-def load_auction(region: str, item_id: int | None = None) -> list[tuple]:
-    """История аукциона региона: [(момент, предмет, пол, рынок, кол-во, лоты), ...]."""
+def load_auction(
+    region: str, item_id: int | None = None, months: int | None = None
+) -> list[tuple]:
+    """История аукциона региона: [(момент, предмет, пол, рынок, ...), ...].
+
+    `months` — сколько ПОСЛЕДНИХ месячных файлов читать. Без ограничения
+    функция честно прочтёт всё, что накопилось, и на длинной дистанции это
+    становится дорого: замерено, что 400 товаров дают 3.5 млн строк в год,
+    а чтение такого объёма занимает секунды вместо сотых долей.
+
+    Аналитике столько не нужно — окно сравнения 21 день, ритм смотрит 60.
+    Поэтому читаем ровно нужный хвост, а не весь архив.
+    """
     directory = config.AUCTION_DIR / region
     if not directory.exists():
         return []
+    files = sorted(directory.glob("*.csv"))
+    if months:
+        files = files[-months:]
     rows: dict[AuctionKey, AuctionRow] = {}
-    for path in sorted(directory.glob("*.csv")):
+    for path in files:
         rows.update(read_auction_month(path))
     return [
         (moment, item, *rows[(moment, item)])
