@@ -118,11 +118,32 @@ AUCTION_HEADER = (
     "lots",
     "deal_qty",
     "deal_cost",
+    # Сколько единиц ушло с прилавка с прошлого снимка и за сколько часов.
+    # Пусто, когда измерить не удалось: сборщик видит это, только если
+    # застал ОБА соседних снимка внутри одного окна. Пропуск — норма,
+    # а не поломка, и нулём его подменять нельзя: ноль значит «ничего не
+    # продалось», а пусто — «не измеряли».
+    "sold_qty",
+    "sold_hours",
 )
 
 AuctionKey = tuple[datetime, int]
-# floor, market, quantity, lots, deal_qty, deal_cost
-AuctionRow = tuple[int, int, int, int, int, int]
+# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours
+AuctionRow = tuple[int, int, int, int, int, int, int | None, float | None]
+
+
+def _maybe_int(value: str | None) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_float(value: str | None) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def auction_month_file(region: str, moment: datetime) -> Path:
@@ -148,6 +169,10 @@ def read_auction_month(path: Path) -> dict[AuctionKey, AuctionRow]:
                     # из-за этого нельзя — история дороже полноты колонок.
                     int(row.get("deal_qty") or 0),
                     int(row.get("deal_cost") or 0),
+                    # А вот эти два именно None, если пусто: «не измеряли»
+                    # и «продалось ноль» — разные вещи.
+                    _maybe_int(row.get("sold_qty")),
+                    _maybe_float(row.get("sold_hours")),
                 )
             except (KeyError, ValueError, TypeError):
                 continue
@@ -161,11 +186,19 @@ def _write_auction_month(path: Path, rows: dict[AuctionKey, AuctionRow]) -> None
         writer = csv.writer(handle)
         writer.writerow(AUCTION_HEADER)
         for moment, item_id in sorted(rows):
-            writer.writerow([_format(moment), item_id, *rows[(moment, item_id)]])
+            values = [
+                "" if v is None else v for v in rows[(moment, item_id)]
+            ]
+            writer.writerow([_format(moment), item_id, *values])
     temp.replace(path)
 
 
-def append_auction(snapshot, item_ids: list[int]) -> int:
+def append_auction(
+    snapshot,
+    item_ids: list[int],
+    sold: dict[int, int] | None = None,
+    sold_hours: float | None = None,
+) -> int:
     """Дописать снимок по списку слежки. Возвращает число новых строк.
 
     Снимок целиком не пишем никогда: в нём 12 тысяч предметов, а нужны
@@ -191,6 +224,10 @@ def append_auction(snapshot, item_ids: list[int]) -> int:
             quote.lots,
             quote.deal_qty,
             quote.deal_cost,
+            # sold есть только когда сборщик застал оба соседних снимка.
+            # Предмет, которого в sold нет, но измерение было, продал ноль.
+            (sold.get(item_id, 0) if sold is not None else None),
+            (round(sold_hours, 2) if sold is not None and sold_hours else None),
         )
         added += 1
 

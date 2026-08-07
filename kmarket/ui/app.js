@@ -322,6 +322,11 @@ function renderReadiness(r) {
       : `${what} — нужно ${need} снимков, есть ${hours}`;
   box.innerHTML =
     `<span class="rd">Накоплено снимков: <b>${hours}</b></span>` +
+    `<span class="rd">${
+      r.sold
+        ? `<b>скорость продаж — работает</b> (${r.sold} из ${r.total} товаров)`
+        : `скорость продаж — нужно ${r.need_sold} измеренных переходов`
+    }</span>` +
     `<span class="rd">${bit(r.activity, r.need_activity, "движение товара")}</span>` +
     `<span class="rd">${bit(r.levels, r.need_levels, "уровни цен")}</span>`;
 }
@@ -345,10 +350,17 @@ function row(it) {
   const era = it.current_era
     ? ""
     : ` <span class="tag" title="Товар не из текущего дополнения: большой спред у такого обычно оттого, что рынок никто не смотрит">старьё</span>`;
-  const move =
-    it.activity_pct === null || it.activity_pct === undefined
-      ? ""
-      : ` · ${it.activity_pct < 1 ? "стоит" : "движение " + it.activity_pct + "%"}`;
+  // Измеренный срок распродажи бьёт косвенное «движение»: он прямо
+  // отвечает на вопрос «когда я верну деньги».
+  let move = "";
+  if (it.hours_to_clear !== null && it.hours_to_clear !== undefined) {
+    const h = it.hours_to_clear;
+    move = ` · разойдётся за ${h < 48 ? Math.round(h) + " ч" : (h / 24).toFixed(1) + " сут"}`;
+  } else if (it.sold_per_hour !== null && it.sold_per_hour !== undefined) {
+    move = ` · уходит ${it.sold_per_hour} шт/ч`;
+  } else if (it.activity_pct !== null && it.activity_pct !== undefined) {
+    move = ` · ${it.activity_pct < 1 ? "стоит" : "движение " + it.activity_pct + "%"}`;
+  }
   // Цветом отмечаем только то, где есть настоящие деньги. Порог тот же,
   // что в аналитике (MIN_UPSIDE_GOLD): два места, одно значение по смыслу.
   const deal = it.upside_gold >= 500 ? " is-deal" : "";
