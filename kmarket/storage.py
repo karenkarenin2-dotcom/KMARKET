@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config
@@ -197,6 +197,82 @@ def append_auction(snapshot, item_ids: list[int]) -> int:
     if added:
         _write_auction_month(path, rows)
     return added
+
+
+# --------------------------------------------------------------------------
+# Широкий срез: весь аукцион целиком, несколько раз в сутки.
+#
+# ФАЙЛ НА СУТКИ, А НЕ НА МЕСЯЦ. Месячный файл здесь весил бы полтора
+# миллиона строк, и переписывать его целиком на каждом срезе (как мы
+# делаем с узкой историей) стало бы заметно дорого. Суточный — это
+# 48 тысяч строк, мгновенно.
+#
+# ПОЛЕЙ МЕНЬШЕ, ЧЕМ В УЗКОЙ ИСТОРИИ. Здесь нужен ответ на один вопрос:
+# что и насколько подорожало вокруг патча. Глубина выкупаемого хвоста
+# для этого не нужна, а вес файла она поднимает на треть.
+# --------------------------------------------------------------------------
+
+WIDE_HEADER = ("updated_utc", "item_id", "floor_copper", "market_copper", "quantity")
+
+
+def wide_day_file(region: str, moment: datetime) -> Path:
+    """data/auction_wide/eu/2026-08-12.csv"""
+    return config.AUCTION_WIDE_DIR / region / f"{moment:%Y-%m-%d}.csv"
+
+
+def wide_snapshots(region: str, moment: datetime) -> set[datetime]:
+    """Какие срезы за эти сутки уже записаны — по ним считаем, пора ли новый."""
+    path = wide_day_file(region, moment)
+    if not path.exists():
+        return set()
+    seen: set[datetime] = set()
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            try:
+                seen.add(_parse(row["updated_utc"]))
+            except (KeyError, ValueError, TypeError):
+                continue
+    return seen
+
+
+def append_auction_wide(snapshot) -> int:
+    """Дописать ВЕСЬ снимок в суточный файл. Возвращает число строк.
+
+    Дозапись, а не переписывание: срезы приходят по возрастанию времени,
+    поэтому файл и так остаётся упорядоченным, а git видит diff в хвост.
+    """
+    moment = snapshot.updated.astimezone(timezone.utc).replace(microsecond=0)
+    if moment in wide_snapshots(snapshot.region, moment):
+        return 0  # этот срез уже записан — дублей не плодим
+
+    path = wide_day_file(snapshot.region, moment)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not path.exists()
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        if fresh:
+            writer.writerow(WIDE_HEADER)
+        for item_id in sorted(snapshot.quotes):
+            quote = snapshot.quotes[item_id]
+            writer.writerow(
+                [_format(moment), item_id, quote.floor, quote.market, quote.quantity]
+            )
+    return len(snapshot.quotes)
+
+
+def wide_due(region: str, moment: datetime, every_hours: float) -> bool:
+    """Пора ли писать широкий срез.
+
+    Смотрим на самый свежий уже записанный срез за эти сутки И за
+    предыдущие: без второго на стыке суток мы писали бы срез сразу
+    после полуночи независимо от того, когда был предыдущий.
+    """
+    seen = wide_snapshots(region, moment) | wide_snapshots(
+        region, moment - timedelta(days=1)
+    )
+    if not seen:
+        return True
+    return (moment - max(seen)).total_seconds() >= every_hours * 3600 - 300
 
 
 def load_auction(region: str, item_id: int | None = None) -> list[tuple]:

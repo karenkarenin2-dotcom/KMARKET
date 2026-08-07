@@ -31,9 +31,22 @@ from .blizzard import get_access_token
 
 DEFAULT_INTERVAL = 600.0
 
+# Дата, после которой широкий срез выключается САМ.
+#
+# Он заведён под цикл патча 12.1 (12 августа) и сезона 2 (18 августа) и
+# стоит 2.3 МБ в сутки. Такие временные меры никто никогда не выключает
+# руками — их просто забывают, и через год выясняется, что репозиторий
+# распух на 25 гигабайт. Поэтому у меры есть срок, зашитый в код, а не
+# только в комментарии к workflow. Продлить — поменять дату осознанно.
+WIDE_UNTIL = "2026-09-06"
 
-def poll_once(token: str, region: str, ids: list[int]) -> int:
-    """Один снимок. Возвращает число новых строк, -1 при отказе."""
+
+def poll_once(token: str, region: str, ids: list[int], wide_hours: float = 0.0) -> int:
+    """Один снимок. Возвращает число новых строк, -1 при отказе.
+
+    Широкий срез пишется из ЭТОГО ЖЕ ответа, а не отдельным запросом:
+    снимок уже скачан и разобран, всё нужное в нём есть.
+    """
     try:
         snapshot = auction.fetch(region, token)
     except Exception as error:  # noqa: BLE001 — наружу нужен текст, не стек
@@ -41,9 +54,16 @@ def poll_once(token: str, region: str, ids: list[int]) -> int:
         return -1
 
     added = storage.append_auction(snapshot, ids)
+    note = ""
+    if wide_hours and f"{snapshot.updated:%Y-%m-%d}" > WIDE_UNTIL:
+        note = f", широкий срез отключён (срок вышел {WIDE_UNTIL})"
+    elif wide_hours and storage.wide_due(region, snapshot.updated, wide_hours):
+        wide = storage.append_auction_wide(snapshot)
+        if wide:
+            note = f", ШИРОКИЙ СРЕЗ: {wide} предметов"
     print(
         f"[KMARKET] {region.upper()} аукцион: {snapshot.updated:%Y-%m-%d %H:%M} UTC, "
-        f"предметов в снимке {len(snapshot.quotes)}, новых строк {added}",
+        f"предметов в снимке {len(snapshot.quotes)}, новых строк {added}{note}",
         flush=True,
     )
     return added
@@ -54,6 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--minutes", type=float, default=0.0, help="длительность окна опроса")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL, help="пауза, секунд")
     parser.add_argument("--region", default=config.PRIMARY_REGION)
+    parser.add_argument(
+        "--wide-hours",
+        type=float,
+        default=0.0,
+        help="как часто писать ВЕСЬ аукцион, часов (0 — не писать)",
+    )
     args = parser.parse_args(argv)
 
     ids = watchlist.item_ids()
@@ -74,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     polls = failures = added = 0
 
     while True:
-        result = poll_once(token, args.region, ids)
+        result = poll_once(token, args.region, ids, args.wide_hours)
         polls += 1
         if result < 0:
             failures += 1
