@@ -15,8 +15,20 @@
 значимые вехи, без мелких правок. Даты Midnight сверены с анонсом Blizzard
 (пре-патч 2026-01-20, запуск 2026-03-02, Season 1 2026-03-17).
 
-ВАЖНО ПРИ ОБНОВЛЕНИИ: список надо пополнять руками по мере выхода патчей.
-Blizzard не отдаёт даты патчей через API — автоматизировать нечем.
+ЧТО ВНОСИТСЯ РУКАМИ, А ЧТО НАХОДИТСЯ САМО (уточнено 2026-08-08).
+Прежняя формулировка «автоматизировать нечем» оказалась неверной —
+часть работы API берёт на себя, просто не отдельным эндпоинтом:
+
+* **само** — выход патча (по версии сборки в namespace) и старт сезона
+  (`mythic-keystone/season` отдаёт `start_timestamp`). См. kmarket.gameinfo;
+  найденное подмешивается через `all_events()`.
+* **руками** — БУДУЩИЕ даты. Анонсы Blizzard живут в новостях, а не в
+  данных, и обнаружение всегда идёт пост фактум.
+
+Это важное разделение: автоматика закрывает фазу ПОСЛЕ события (цена
+оседает), а фаза ДО — самый ценный сигнал, +12% за месяц до запуска —
+по-прежнему держится на внесённых вручную датах. Чтобы список не протухал
+молча, есть `staleness()`: он говорит вслух, когда будущих дат не осталось.
 """
 
 from __future__ import annotations
@@ -80,6 +92,63 @@ EVENTS: tuple[Event, ...] = (
 BEFORE_DAYS = 30
 AFTER_DAYS = 30
 
+# За сколько дней вперёд список обязан кого-то знать. Меньше — считаем,
+# что он протух, и говорим об этом вслух.
+STALE_HORIZON_DAYS = 30
+
+
+def detected() -> tuple[Event, ...]:
+    """События, которые система нашла в API сама (см. kmarket.gameinfo).
+
+    Обнаружение всегда ПОСТ ФАКТУМ: API сообщает «патч уже вышел», а не
+    «выйдет через неделю». Поэтому автоматика закрывает фазу ПОСЛЕ, а
+    фаза ДО — самый ценный сигнал — по-прежнему держится на руках.
+    """
+    from .. import gameinfo
+
+    out: list[Event] = []
+    for item in gameinfo.load_state().get("detected", []):
+        try:
+            out.append(Event(item["label"], item["date"], item.get("kind", CONTENT)))
+        except (KeyError, TypeError):
+            continue
+    return tuple(out)
+
+
+def all_events() -> tuple[Event, ...]:
+    """Ручной список плюс обнаруженное, без дублей по (дата, вид).
+
+    Ручная запись побеждает: у неё человеческое название («Midnight:
+    сезон 2» против «Сезон Мифик+ 18»).
+    """
+    merged: dict[tuple[str, str], Event] = {}
+    for event in detected():
+        merged[(event.date, event.kind)] = event
+    for event in EVENTS:  # ручной список идёт вторым и перекрывает
+        merged[(event.date, event.kind)] = event
+    return tuple(sorted(merged.values(), key=lambda e: e.date))
+
+
+def staleness(now: pd.Timestamp | None = None) -> dict:
+    """Знаем ли мы хоть одну будущую дату. Ответ нужен интерфейсу и алертам.
+
+    ЗАЧЕМ. Даты анонсируются в новостях, а не в API, и вносятся руками.
+    Пустой список выглядит точно так же, как спокойный рынок, — и это
+    самый дорогой вид молчаливой поломки в проекте. Пусть лучше скажет.
+    """
+    now = now or pd.Timestamp.now(tz="UTC")
+    ahead = [
+        e for e in all_events() if pd.Timestamp(e.date, tz="UTC") > now
+    ]
+    nearest = min(ahead, key=lambda e: e.date) if ahead else None
+    return {
+        "known_ahead": len(ahead),
+        "nearest": {"label": nearest.label, "date": nearest.date} if nearest else None,
+        "stale": not ahead
+        or (pd.Timestamp(nearest.date, tz="UTC") - now).days > STALE_HORIZON_DAYS,
+        "horizon_days": STALE_HORIZON_DAYS,
+    }
+
 
 @dataclass
 class EventEffect:
@@ -100,7 +169,7 @@ def upcoming(limit: int = 3, now: pd.Timestamp | None = None) -> list[dict]:
     """Ближайшие будущие события — чтобы дашборд мог предупредить заранее."""
     now = now or pd.Timestamp.now(tz="UTC")
     ahead = []
-    for event in EVENTS:
+    for event in all_events():
         moment = pd.Timestamp(event.date, tz="UTC")
         if moment > now:
             ahead.append(
@@ -117,7 +186,7 @@ def upcoming(limit: int = 3, now: pd.Timestamp | None = None) -> list[dict]:
 def in_range(start: pd.Timestamp, end: pd.Timestamp) -> list[dict]:
     """События внутри диапазона — для отметок на графике."""
     result = []
-    for event in EVENTS:
+    for event in all_events():
         moment = pd.Timestamp(event.date, tz="UTC")
         if start <= moment <= end:
             result.append({"label": event.label, "date": event.date, "kind": event.kind})
@@ -144,7 +213,7 @@ def context(now: pd.Timestamp | None = None, horizon: int = 30) -> dict | None:
     """
     now = now or pd.Timestamp.now(tz="UTC")
     found: list[dict] = []
-    for event in EVENTS:
+    for event in all_events():
         moment = pd.Timestamp(event.date, tz="UTC")
         days = (moment.normalize() - now.normalize()).days  # >0 впереди, <0 позади
         if abs(days) > horizon:
@@ -173,7 +242,7 @@ def context(now: pd.Timestamp | None = None, horizon: int = 30) -> dict | None:
 
 def _curves(daily: pd.Series, kind: str | None) -> list[dict[int, float]]:
     curves: list[dict[int, float]] = []
-    for event in EVENTS:
+    for event in all_events():
         if kind and event.kind != kind:
             continue
         moment = pd.Timestamp(event.date, tz="UTC")

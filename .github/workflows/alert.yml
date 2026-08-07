@@ -50,13 +50,17 @@ jobs:
       - name: Сохранить состояние алертов
         if: github.event.inputs.dry_run != 'true'
         run: |
-          if [ -z "$(git status --porcelain data/alert_state.json)" ]; then
+          # game_state.json тоже сюда: в нём запомнено, какую версию игры и
+          # какие номера сезонов мы уже видели. Без него смена версии
+          # обнаруживалась бы заново на каждом запуске и слала бы пуш
+          # каждый час.
+          if [ -z "$(git status --porcelain data/alert_state.json data/game_state.json)" ]; then
             echo "Состояние не изменилось — коммитить нечего."
             exit 0
           fi
           git config user.name "kmarket-alerts"
           git config user.email "actions@users.noreply.github.com"
-          git add data/alert_state.json
+          git add data/alert_state.json data/game_state.json
           git commit -m "alert: состояние на $(date -u '+%Y-%m-%d %H:%M') UTC"
           # Без --autostash. Прятать здесь нечего (файл уже закоммичен), а
           # именно автозаначка 2026-07-26 вписала маркеры конфликта прямо
