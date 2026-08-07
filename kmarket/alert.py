@@ -36,7 +36,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import auction, blizzard, config, notify
+from . import auction, blizzard, config, gameinfo, notify
 from .analytics import auction as auction_analytics
 from .analytics import events, report as build_report
 
@@ -165,6 +165,46 @@ def _bargain_message(item: dict) -> str:
     return "\n".join(lines)
 
 
+def _stale_message(stale: dict) -> str:
+    """Напоминание, что календарь событий опустел.
+
+    Без него список молча протухает, а вердикт продолжает уверенно
+    ссылаться на давно прошедшие патчи. Пусть лучше попросит.
+    """
+    if stale["nearest"]:
+        tail = (
+            f"Ближайшее известное — {stale['nearest']['label']} "
+            f"({stale['nearest']['date']}), это дальше {stale['horizon_days']} дней."
+        )
+    else:
+        tail = "Будущих дат я не знаю ни одной."
+    return "\n".join(
+        [
+            "🗓 <b>Календарь событий пора пополнить</b>",
+            "",
+            tail,
+            "",
+            "Выход патчей и старты сезонов система замечает сама, но только "
+            "ПОСЛЕ факта. Предупредить заранее — а это самый сильный сигнал, "
+            "+12% за месяц до запуска — можно лишь по объявленным датам.",
+            "",
+            "Если Blizzard уже что-то анонсировала, скажи Claude — он внесёт.",
+        ]
+    )
+
+
+def _game_change_message(found: list[dict]) -> str:
+    lines = ["🎮 <b>В игре что-то поменялось</b>", ""]
+    for item in found:
+        lines.append(f"· {item['label']} — {item['date']} ({item['source']})")
+    lines += [
+        "",
+        "Событие добавлено в календарь автоматически. С этого момента "
+        "вердикт считает, что мы в фазе ПОСЛЕ: цена обычно оседает.",
+    ]
+    return "\n".join(lines)
+
+
 def _worth_waking(item: dict) -> bool:
     """Стоит ли эта находка того, чтобы лезть к человеку в телефон.
 
@@ -261,11 +301,49 @@ def evaluate(region: str, report: dict, prior: dict) -> tuple[list[str], dict]:
     messages.extend(auction_texts)
     state["auction_seen"] = seen
 
+    # Список будущих событий пуст — самая дорогая из молчаливых поломок.
+    # Напоминаем не чаще раза в неделю, иначе это станет шумом.
+    stale = events.staleness()
+    if stale["stale"]:
+        last = prior.get("stale_reminded")
+        today = datetime.now(timezone.utc).date().isoformat()
+        if not last or (
+            datetime.fromisoformat(today) - datetime.fromisoformat(last)
+        ).days >= 7:
+            messages.append(_stale_message(stale))
+            state["stale_reminded"] = today
+    else:
+        state.pop("stale_reminded", None)
+
     return messages, state
+
+
+def _watch_game(dry_run: bool) -> list[str]:
+    """Заметить, что вышел патч или сменился сезон.
+
+    Живёт здесь, а не в сборщике: сборщику нельзя лишних запросов и
+    лишних файлов состояния, а алерт и так ходит в сеть раз в час.
+    """
+    try:
+        found, state = gameinfo.check(blizzard.get_access_token())
+    except Exception as error:  # noqa: BLE001 — не повод ронять остальные алерты
+        print(f"[KMARKET] Проверка версии игры не удалась: {error}")
+        return []
+    if not dry_run:
+        gameinfo.save_state(state)
+    if not found:
+        return []
+    for item in found:
+        print(f"[KMARKET] Обнаружено: {item['label']} — {item['date']}")
+    return [_game_change_message(found)]
 
 
 def run(*, dry_run: bool = False) -> int:
     region = config.PRIMARY_REGION
+    # Первым делом: не вышел ли патч. Если вышел, вердикт ниже должен
+    # считаться уже с учётом нового события, а не со старым календарём.
+    game_messages = _watch_game(dry_run)
+
     report = build_report(region, fresh=True)
     if report.get("empty"):
         print("[KMARKET] Истории нет — алерты пропущены.")
@@ -273,6 +351,7 @@ def run(*, dry_run: bool = False) -> int:
 
     all_state = _load_state()
     messages, new_state = evaluate(region, report, all_state.get(region, {}))
+    messages = [*game_messages, *messages]
 
     if not messages:
         print(f"[KMARKET] {region.upper()}: изменений нет, пуш не нужен.")
