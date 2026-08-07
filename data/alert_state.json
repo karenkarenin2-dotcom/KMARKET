@@ -1,8 +1,11 @@
 {
   "eu": {
-    "verdict": "wait",
+    "verdict": "avoid",
     "deep_bottom": false,
-    "events_notified": []
+    "events_notified": [
+      "Midnight: патч 12.1",
+      "Midnight: сезон 2"
+    ]
   },
-  "_updated": "2026-08-06T12:08:14.509305+00:00"
+  "_updated": "2026-08-07T00:09:56.547394+00:00"
 }
