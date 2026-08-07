@@ -54,6 +54,45 @@ jobs:
           git config user.name "kmarket-collector"
           git config user.email "actions@users.noreply.github.com"
 
+          # ПОЧЕМУ ЗДЕСЬ НЕТ `git pull --rebase` (поломка 2026-08-07).
+          # Месячный CSV переписывается ЦЕЛИКОМ и отсортированным. Когда
+          # два запуска накладываются, обе стороны переписывают один файл,
+          # и rebase упирается в конфликт ВНУТРИ ДАННЫХ:
+          #     CONFLICT (content): Merge conflict in data/history/us/2026-08.csv
+          # Пока сборщик коммитил раз в 1–3 часа, столкнуться было почти
+          # не с чем; после перехода на коммиты каждые 10 минут это стало
+          # обычным делом.
+          #
+          # Мержить два переписанных файла мы не умеем и не будем — это
+          # прямой путь к маркерам конфликта в истории цен (2026-07-26).
+          # Вместо этого: проиграл гонку — откатись к облаку и ПЕРЕСНИМИ.
+          # Цена жетона живёт 20 минут, так что пересъёмка почти всегда
+          # возвращает ту же точку, а данные заведомо целы.
+          publish() {
+            if [ -z "$(git status --porcelain data)" ]; then
+              echo "Новых точек нет — коммитить нечего."
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              git add data
+              git commit -q -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
+              if git push -q; then
+                return 0
+              fi
+              echo "Кто-то опередил с push (попытка ${attempt}) — беру облачную версию и переснимаю."
+              git fetch -q origin
+              git reset -q --hard origin/main
+              python -m kmarket.collect || true
+              if [ -z "$(git status --porcelain data)" ]; then
+                return 0
+              fi
+            done
+            echo "Опубликовать не удалось за три попытки — точки подберёт следующий отрезок."
+            git fetch -q origin
+            git reset -q --hard origin/main
+            return 0
+          }
+
           end=$(( $(date -u +%s) + 55 * 60 ))
           rc=0
           chunks=0
@@ -63,19 +102,7 @@ jobs:
             echo "::group::Отрезок ${chunks}"
             # Отрезок ~10 минут: три опроса с шагом 5 минут.
             python -m kmarket.collect --minutes 15 --interval 300 || rc=$?
-
-            if [ -n "$(git status --porcelain data)" ]; then
-              git add data
-              git commit -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
-              # ff-only здесь не годится: сборщик и алерты пишут в одну
-              # ветку, и расхождение — норма. Rebase поверх чужого коммита
-              # безопасен, потому что автостэшить нечего: рабочее дерево
-              # чистое сразу после нашего же commit.
-              git pull --rebase
-              git push
-            else
-              echo "Новых точек нет — коммитить нечего."
-            fi
+            publish
             echo "::endgroup::"
           done
 

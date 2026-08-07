@@ -43,6 +43,36 @@ jobs:
           git config user.name "kmarket-collector"
           git config user.email "actions@users.noreply.github.com"
 
+          # Про отсутствие `git pull --rebase` — см. подробный разбор в
+          # collect.yml. Коротко: месячный CSV переписывается целиком, и
+          # при наложении запусков rebase даёт конфликт ВНУТРИ ДАННЫХ.
+          # Проиграл гонку — откатись к облаку и переснимай; снимок
+          # дедуплицируется по времени Blizzard, повтор безвреден.
+          publish() {
+            if [ -z "$(git status --porcelain data)" ]; then
+              echo "Снимок не обновился — коммитить нечего."
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              git add data
+              git commit -q -m "auction: $(date -u '+%Y-%m-%d %H:%M') UTC"
+              if git push -q; then
+                return 0
+              fi
+              echo "Кто-то опередил с push (попытка ${attempt}) — беру облачную версию и переснимаю."
+              git fetch -q origin
+              git reset -q --hard origin/main
+              python -m kmarket.collect_auction --wide-hours 6 || true
+              if [ -z "$(git status --porcelain data)" ]; then
+                return 0
+              fi
+            done
+            echo "Опубликовать не удалось за три попытки — снимок подберёт следующий отрезок."
+            git fetch -q origin
+            git reset -q --hard origin/main
+            return 0
+          }
+
           end=$(( $(date -u +%s) + 55 * 60 ))
           rc=0
 
@@ -66,14 +96,7 @@ jobs:
             # Замерено: ~2.3 МБ в сутки. Убрать после начала сентября.
             python -m kmarket.collect_auction --minutes 35 --interval 600 --wide-hours 6 || rc=$?
 
-            if [ -n "$(git status --porcelain data)" ]; then
-              git add data
-              git commit -m "auction: $(date -u '+%Y-%m-%d %H:%M') UTC"
-              git pull --rebase
-              git push
-            else
-              echo "Снимок не обновился — коммитить нечего."
-            fi
+            publish
           done
 
           exit $rc
