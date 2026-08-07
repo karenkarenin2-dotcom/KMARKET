@@ -86,6 +86,13 @@ UNKNOWN = "unknown"
 # часовые, так что это примерно столько же часов.
 MIN_POINTS_ACTIVITY = 12
 
+# Сколько ИЗМЕРЕННЫХ переходов нужно для оценки скорости продаж. Их
+# заметно меньше, чем снимков: измерение выходит только когда сборщик
+# застал оба соседних снимка внутри одного окна, а это примерно половина
+# случаев. Порог низкий намеренно — метрика прямая, ей не нужен большой
+# набор, чтобы отличить ходовой товар от лежалого.
+MIN_POINTS_SOLD = 4
+
 # Граница ID, с которой начинается текущее дополнение (Midnight, 12.x).
 # Способ приблизительный — Blizzard не отдаёт принадлежность предмета к
 # дополнению никаким полем, — но для разделения «текущее / старое» его
@@ -104,6 +111,11 @@ CURRENT_ERA_FROM_ID = 236_000
 # выше «Затуманенного кристалла» с отдачей 25 тыс., хотя под первую надо
 # вложить 2.2 миллиона (1.9%), а под второй — 38 тысяч (67%).
 MIN_ROI_PCT = 5.0
+
+# За сколько часов выкупленный хвост обязан разойтись, чтобы сделка
+# считалась живой. Неделя — щедро: деньги, застрявшие дольше, лучше
+# вложить в другой товар, даже с меньшим наваром.
+MAX_HOURS_TO_CLEAR = 168.0
 
 
 @dataclass
@@ -132,6 +144,12 @@ class ItemView:
     points: int = 0  # сколько замеров стоит за перцентилем
     current_era: bool = True  # товар текущего дополнения
     activity_pct: float | None = None  # движение запаса за час, % — см. _activity
+    sold_per_hour: float | None = None  # единиц уходит с прилавка в час
+    hours_to_clear: float | None = None  # за сколько разойдётся выкупленный хвост
+    # Рынок стоячий. Решение принимается ОДИН раз в _describe и лежит
+    # здесь: раньше тот же вывод делался ещё и внутри bargains(), копии
+    # разъехались, и находки молча опустели.
+    stalled: bool = False
     change_pct: float | None = None  # изменение рынка за окно
     supply_change_pct: float | None = None  # изменение предложения за окно
 
@@ -158,6 +176,8 @@ def frame(region: str = config.PRIMARY_REGION) -> pd.DataFrame:
             "lots",
             "deal_qty",
             "deal_cost",
+            "sold_qty",
+            "sold_hours",
         ]
         ).set_index("updated")
     table = pd.DataFrame(
@@ -170,6 +190,8 @@ def frame(region: str = config.PRIMARY_REGION) -> pd.DataFrame:
             "lots",
             "deal_qty",
             "deal_cost",
+            "sold_qty",
+            "sold_hours",
         ]
     )
     table["updated"] = pd.to_datetime(table["updated"], utc=True)
@@ -208,6 +230,29 @@ def _activity(history: pd.DataFrame) -> float | None:
     return round(float(step.median()) / typical * 100, 1)
 
 
+def _sold_rate(history: pd.DataFrame) -> float | None:
+    """Сколько единиц уходит с прилавка в час. None — если не измеряли.
+
+    Считается по строкам, где сборщик застал оба соседних снимка и смог
+    сравнить лоты. Медиана, а не среднее: один всплеск спроса не должен
+    объявлять товар ходовым навсегда.
+
+    ВЕРХНЯЯ ОЦЕНКА, НЕ ТОЧНОЕ ЧИСЛО. Снятие лота продавцом (чтобы
+    перевыставить дешевле) снаружи неотличимо от покупки, а подрезают
+    друг друга постоянно. Значит настоящие продажи не больше этого числа,
+    но могут быть заметно меньше. Для сравнения товаров между собой
+    годится, для обещаний по срокам — только с оговоркой.
+    """
+    if history.empty or "sold_qty" not in history:
+        return None
+    rows = history.dropna(subset=["sold_qty", "sold_hours"])
+    rows = rows[rows["sold_hours"] > 0]
+    if len(rows) < MIN_POINTS_SOLD:
+        return None
+    per_hour = rows["sold_qty"].astype(float) / rows["sold_hours"].astype(float)
+    return round(float(per_hour.median()), 1)
+
+
 def _percentile(series: pd.Series, current: float) -> float:
     """Доля моментов, когда было ДЕШЕВЛЕ текущего. 0 — исторический минимум."""
     if series.empty:
@@ -229,9 +274,22 @@ def _describe(view: ItemView, event: dict | None) -> None:
         )
         # Оговорка обязательна. Метрика меряет РАЗРЫВ в стакане, а не
         # спрос: выкупить дешёвый хвост можно всегда, а вот продастся ли
-        # он — отдельный вопрос. Пока движение не измерено, об этом надо
-        # говорить прямо; когда измерено — говорить измеренное.
-        if view.activity_pct is None:
+        # он — отдельный вопрос.
+        #
+        # Порядок ответов от лучшего к худшему: измеренная скорость продаж
+        # (прямая), движение запаса (косвенное), молчание.
+        if view.hours_to_clear is not None:
+            срок = (
+                f"{view.hours_to_clear:.0f} ч"
+                if view.hours_to_clear < 48
+                else f"{view.hours_to_clear / 24:.1f} сут"
+            )
+            reasons.append(
+                f"С прилавка уходит около {view.sold_per_hour:.0f} шт/ч — выкупленный "
+                f"хвост разойдётся примерно за {срок}. Это верхняя оценка: снятие "
+                f"лота продавцом снаружи неотличимо от покупки."
+            )
+        elif view.activity_pct is None:
             reasons.append(
                 f"Движение запаса ещё не измерено (нужно {MIN_POINTS_ACTIVITY} снимков, "
                 f"есть {view.points}) — выгода тут арифметическая, а не обещанная. "
@@ -323,10 +381,15 @@ def _describe(view: ItemView, event: dict | None) -> None:
     # первые полсуток работы модуль молчал бы обо всём), но оговорка про
     # неизмеренную скорость уже добавлена выше.
     arbitrage = view.upside_gold >= MIN_UPSIDE_GOLD and view.roi_pct >= MIN_ROI_PCT
-    stalled = view.activity_pct is not None and view.activity_pct < 1.0
-    if arbitrage and not stalled:
+    # Прямое измерение бьёт косвенное: если знаем скорость продаж, судим
+    # по сроку распродажи хвоста, и только иначе — по шевелению запаса.
+    if view.hours_to_clear is not None:
+        view.stalled = view.hours_to_clear > MAX_HOURS_TO_CLEAR
+    else:
+        view.stalled = view.activity_pct is not None and view.activity_pct < 1.0
+    if arbitrage and not view.stalled:
         state = BUY
-    elif arbitrage and stalled and state == UNKNOWN:
+    elif arbitrage and view.stalled and state == UNKNOWN:
         state = HOLD
 
     view.state = state
@@ -396,6 +459,9 @@ def board(
         view.points = int(len(history))
         view.current_era = item_id >= CURRENT_ERA_FROM_ID
         view.activity_pct = _activity(history)
+        view.sold_per_hour = _sold_rate(history)
+        if view.sold_per_hour and view.deal_qty:
+            view.hours_to_clear = round(view.deal_qty / view.sold_per_hour, 1)
 
         if view.points >= MIN_POINTS:
             view.percentile = _percentile(history["market"], market)
@@ -427,7 +493,9 @@ def bargains(views: list[ItemView], limit: int = 12) -> list[ItemView]:
         # Стоячий рынок из списка действий выбрасываем: там нечего делать.
         # Из общей таблицы товар никуда не девается, со всеми своими
         # числами, — просто перестаёт выдавать себя за возможность.
-        and not (v.activity_pct is not None and v.activity_pct < 1.0)
+        # Признак берём готовый (см. ItemView.stalled), а не пересчитываем:
+        # копия этого условия здесь уже однажды разъехалась с оригиналом.
+        and not v.stalled
     ]
     worth.sort(key=lambda v: v.upside_gold, reverse=True)
     return worth[:limit]
@@ -446,9 +514,11 @@ def readiness(views: list[ItemView]) -> dict:
     return {
         "points": points,
         "activity": sum(1 for v in views if v.activity_pct is not None),
+        "sold": sum(1 for v in views if v.sold_per_hour is not None),
         "levels": sum(1 for v in views if v.percentile is not None),
         "total": len(views),
         "need_activity": MIN_POINTS_ACTIVITY,
+        "need_sold": MIN_POINTS_SOLD,
         "need_levels": MIN_POINTS,
     }
 

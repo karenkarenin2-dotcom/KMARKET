@@ -48,7 +48,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from . import blizzard
@@ -87,11 +87,52 @@ class Quote:
         return gross / blizzard.COPPER_PER_GOLD
 
 
+# Остаток времени, при котором исчезновение лота НЕЛЬЗЯ объяснить
+# истечением срока. Корзины Blizzard: SHORT (<30 мин), MEDIUM (30 мин–2 ч),
+# LONG (2–12 ч), VERY_LONG (>12 ч). При часовом шаге снимков SHORT и
+# MEDIUM могли протухнуть сами, а LONG и VERY_LONG — нет.
+ALIVE_TIME_LEFT = frozenset({"LONG", "VERY_LONG"})
+
+
 @dataclass(frozen=True)
 class Snapshot:
     region: str
     updated: datetime  # время САМОЙ Blizzard, ключ дедупликации
     quotes: dict[int, Quote]
+    # {id лота: (предмет, количество, остаток времени)} — только по тем
+    # предметам, что просили отслеживать. Нужен для сравнения соседних
+    # снимков, см. sold_between.
+    lots: dict[int, tuple[int, int, str]] = field(default_factory=dict)
+
+
+def sold_between(prev: Snapshot, curr: Snapshot) -> dict[int, int]:
+    """Сколько единиц ушло с прилавка между двумя снимками, по предметам.
+
+    КАК ЭТО РАБОТАЕТ. У каждого лота есть свой `id`, и он сохраняется
+    между снимками — проверено на живых данных 2026-08-07: из 17 631 лота
+    id уцелели у 84.3%, и у 99.8% выживших совпали предмет, цена и
+    количество. Значит id опознаёт ТОТ ЖЕ САМЫЙ лот, а не переиспользуется.
+
+    Дальше смотрим на пропавшие лоты и на их остаток времени в прошлом
+    снимке. Лот с запасом LONG/VERY_LONG за час протухнуть не мог —
+    значит его забрали с прилавка.
+
+    ЧЕГО ЭТА МЕТРИКА НЕ УМЕЕТ, И ЭТО ВАЖНО. Отличить покупку от снятия
+    лота продавцом невозможно: наружу и то и другое выглядит одинаково —
+    лот был и пропал. А продавцы снимают постоянно, чтобы перевыставить
+    дешевле и подрезать конкурента. Поэтому число — ВЕРХНЯЯ ОЦЕНКА
+    продаж, а не сами продажи. Для сравнения товаров между собой годится
+    отлично; обещать по нему «продастся за N часов» — нет.
+    """
+    if not prev.lots or not curr.lots:
+        return {}
+    gone: dict[int, int] = {}
+    for lot_id, (item_id, quantity, time_left) in prev.lots.items():
+        if lot_id in curr.lots:
+            continue
+        if time_left in ALIVE_TIME_LEFT:
+            gone[item_id] = gone.get(item_id, 0) + quantity
+    return gone
 
 
 def _fold(book: list[tuple[int, int]]) -> tuple[int, int, int, int, int, int]:
@@ -128,11 +169,17 @@ def _fold(book: list[tuple[int, int]]) -> tuple[int, int, int, int, int, int]:
     return floor, market, total, len(book), deal_qty, deal_cost
 
 
-def fetch(region: str, access_token: str) -> Snapshot:
+def fetch(
+    region: str, access_token: str, track_lots: set[int] | None = None
+) -> Snapshot:
     """Снимок товарного аукциона региона.
 
     Ответ большой (2.9 МБ сжатых, 24.8 МБ распакованных), поэтому идёт
     через _http_json_dated с длинным таймаутом: тридцати секунд ему мало.
+
+    `track_lots` — предметы, по которым запомнить отдельные лоты (для
+    измерения продаж). Только они: держать в памяти все 265 тысяч лотов
+    незачем, а по списку слежки их около семнадцати тысяч.
     """
     url = (
         f"https://{region}.api.blizzard.com/data/wow/auctions/commodities"
@@ -145,6 +192,7 @@ def fetch(region: str, access_token: str) -> Snapshot:
     )
 
     books: dict[int, list[tuple[int, int]]] = {}
+    lots: dict[int, tuple[int, int, str]] = {}
     for lot in data.get("auctions", ()):
         try:
             item_id = int(lot["item"]["id"])
@@ -154,6 +202,15 @@ def fetch(region: str, access_token: str) -> Snapshot:
             continue  # битый лот не повод терять весь снимок
         if quantity > 0 and price > 0:
             books.setdefault(item_id, []).append((price, quantity))
+            if track_lots and item_id in track_lots:
+                try:
+                    lots[int(lot["id"])] = (
+                        item_id,
+                        quantity,
+                        str(lot.get("time_left") or ""),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    pass
 
     if not books:
         raise RuntimeError(f"Снимок аукциона {region.upper()} пуст — это не норма")
@@ -169,4 +226,5 @@ def fetch(region: str, access_token: str) -> Snapshot:
         # уронить сбор из-за отсутствующего заголовка.
         updated=(updated or datetime.now(timezone.utc)).replace(microsecond=0),
         quotes=quotes,
+        lots=lots,
     )
