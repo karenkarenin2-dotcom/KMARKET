@@ -1,0 +1,13 @@
+{
+ "build": "12.0.7",
+ "mplus_season": {
+  "id": 17,
+  "started": "2026-03-18"
+ },
+ "pvp_season": {
+  "id": 41,
+  "started": null
+ },
+ "checked_utc": "2026-08-07T20:50:42+00:00",
+ "detected": []
+}
