@@ -19,6 +19,14 @@
   2. Глубокое дно (нижние 10% за 90 дней) — отдельный, более сильный пинг.
   3. Впереди игровое событие — цена исторически задрана перед ним и падает
      после; предупреждаем один раз на событие.
+  4. Слив на товарном аукционе: кто-то выставил дешёвый хвост, который
+     можно выкупить и перевыставить.
+
+ПОЧЕМУ АУКЦИОННЫЙ АЛЕРТ ВАЖНЕЕ ОСТАЛЬНЫХ. Окно покупки жетона живёт
+днями, и часом раньше или позже — безразлично. Дешёвый хвост на ходовом
+реагенте разбирают за МИНУТЫ. Пока ты не в игре, ты о нём не узнаешь
+никак: аддоны в игре мертвы, когда игра закрыта. Здесь пуш из облака —
+единственный способ вообще увидеть такую возможность.
 """
 
 from __future__ import annotations
@@ -28,7 +36,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, notify
+from . import auction, blizzard, config, notify
+from .analytics import auction as auction_analytics
 from .analytics import events, report as build_report
 
 STATE_FILE = config.DATA_DIR / "alert_state.json"
@@ -36,6 +45,13 @@ STATE_FILE = config.DATA_DIR / "alert_state.json"
 DEEP_BOTTOM_ENTER = 10.0  # входим в режим «глубокое дно»
 DEEP_BOTTOM_EXIT = 15.0   # выходим (гистерезис, чтобы не мигать у порога)
 EVENT_HORIZON_DAYS = 21   # за сколько дней предупреждать о событии
+
+# Порог, начиная с которого находка достойна разбудить человека.
+# В приложении порог ниже (500 з): там ты сам решил посмотреть, и
+# показать мелочь не грех. Здесь мы ЛЕЗЕМ В КАРМАН с уведомлением, и
+# цена ошибки другая — разбуженный ради двух тысяч золота человек
+# отключит алерты совсем, и тогда пропустит настоящие.
+ALERT_MIN_UPSIDE = 10_000.0
 
 EMOJI = {"buy": "🟢", "wait": "🟡", "avoid": "🔴"}
 
@@ -118,6 +134,95 @@ def _event_message(event: dict) -> str:
     )
 
 
+def _gold(value: float) -> str:
+    return f"{value:,.0f}".replace(",", " ")
+
+
+def _bargain_message(item: dict) -> str:
+    """Сообщение про один слив. Все оговорки внутри — решать по нему."""
+    lines = [
+        f"💰 <b>{item['name']}</b>",
+        "",
+        f"Цена сейчас <b>{item['floor_gold']} з</b>, вернётся к {item['market_gold']} з.",
+        f"Вложить {_gold(item['deal_cost_gold'])} з "
+        f"({_gold(item['deal_qty'])} шт) → вернуть ~{_gold(item['upside_gold'])} з "
+        f"чистыми ({item['roi_pct']:.0f}%).",
+    ]
+
+    if item.get("hours_to_clear") is not None:
+        hours = item["hours_to_clear"]
+        srok = f"{hours:.0f} ч" if hours < 48 else f"{hours / 24:.1f} сут"
+        lines.append(f"Разойдётся примерно за {srok}.")
+    else:
+        lines.append("Скорость продаж по нему ещё не измерена — срок неизвестен.")
+
+    if not item.get("current_era", True):
+        lines += [
+            "",
+            "⚠️ Товар не из текущего дополнения. Большой разрыв у такого обычно "
+            "оттого, что рынок никто не смотрит, — и продать бывает некому.",
+        ]
+    return "\n".join(lines)
+
+
+def _worth_waking(item: dict) -> bool:
+    """Стоит ли эта находка того, чтобы лезть к человеку в телефон.
+
+    ПОРОГ ЗДЕСЬ СТРОЖЕ, ЧЕМ В ПРИЛОЖЕНИИ, и намеренно. В окне человек сам
+    решил посмотреть, и находку с оговоркой показать не грех — он видит
+    все числа разом и выбирает. Уведомление же приходит без спроса и
+    требует действия: сходить в игру, потратить время и золото.
+
+    Первый же сухой прогон показал, зачем это нужно. Наверх вылезли
+    «Льняная ткань» с наваром 467 тысяч на 558 тысячах штук и «Огнецвет»
+    на 528% — старьё с неизмеренной скоростью продаж. Арифметика верная,
+    а совет вредный: столько льняной ткани не выкупит никто, и деньги
+    застрянут навсегда.
+
+    Правило: разбудить можно, если известно, что товар РАСХОДИТСЯ, — либо
+    это подтверждено измерением, либо это товар текущего дополнения, где
+    спрос заведомо есть. Старьё без измеренной скорости молчит до тех пор,
+    пока скорость не появится.
+    """
+    if item.get("hours_to_clear") is not None:
+        return True  # скорость измерена, а стоячие уже отсеяны в bargains
+    return bool(item.get("current_era"))
+
+
+def _auction_messages(prior: dict) -> tuple[list[str], list[int]]:
+    """Сливы, которых не было в прошлый раз. Возвращает (сообщения, id находок).
+
+    ДЕДУП ПО СОСТАВУ НАБОРА, а не по времени. Слив живёт часами, и алерт
+    раз в час превратился бы в десять одинаковых сообщений про один и тот
+    же лот. Поэтому шлём только те находки, которых в прошлый раз НЕ БЫЛО;
+    когда находка уходит из набора, она забывается и в следующий раз
+    сработает снова.
+    """
+    try:
+        snapshot = auction.fetch(config.PRIMARY_REGION, blizzard.get_access_token())
+        summary = auction_analytics.summary(
+            config.PRIMARY_REGION, live=snapshot.quotes
+        )
+    except Exception as error:  # noqa: BLE001 — аукцион не должен ронять алерты жетона
+        print(f"[KMARKET] Аукцион недоступен, пропускаю: {error}")
+        return [], list(prior.get("auction_seen", []))
+
+    worthy = [
+        item
+        for item in summary.get("bargains", [])
+        if item["upside_gold"] >= ALERT_MIN_UPSIDE and _worth_waking(item)
+    ]
+    seen = set(prior.get("auction_seen", []))
+    fresh = [item for item in worthy if item["item_id"] not in seen]
+
+    messages = [_bargain_message(item) for item in fresh[:3]]
+    if len(fresh) > 3:
+        messages.append(
+            f"…и ещё {len(fresh) - 3} находок помельче — смотри в приложении."
+        )
+    return messages, [item["item_id"] for item in worthy]
+
+
 def evaluate(region: str, report: dict, prior: dict) -> tuple[list[str], dict]:
     """Сравнить свежий отчёт с запомненным состоянием. Вернуть (сообщения, новое состояние)."""
     messages: list[str] = []
@@ -150,6 +255,11 @@ def evaluate(region: str, report: dict, prior: dict) -> tuple[list[str], dict]:
             notified.append(event["label"])
     # Забываем прошедшие события, чтобы список не рос и повтор сработал в след. цикле.
     state["events_notified"] = [label for label in notified if label in upcoming_labels]
+
+    # Сливы на товарном аукционе — отдельный, самый скоропортящийся повод.
+    auction_texts, seen = _auction_messages(prior)
+    messages.extend(auction_texts)
+    state["auction_seen"] = seen
 
     return messages, state
 
