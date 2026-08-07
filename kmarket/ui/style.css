@@ -502,6 +502,29 @@ body[data-max="1"] #btn-max .on-restore {
   color: var(--chip);
 }
 
+/* ---------- недельный ритм ---------- */
+
+.rhythm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
+  margin-bottom: 10px;
+}
+
+.rh-when {
+  display: block;
+  font-family: var(--ui-display);
+  font-size: 22px;
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-what {
+  display: block;
+  font-size: 11px;
+  color: var(--dim);
+}
+
 /* ---------- полоса созревания ---------- */
 
 .ready {

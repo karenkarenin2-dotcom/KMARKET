@@ -291,6 +291,7 @@ function renderAuction(data) {
       : "");
 
   renderReadiness(data.readiness);
+  renderRhythm(data.rhythm);
 
   const bargains = data.bargains || [];
   $("#a-bargains").innerHTML = bargains.length
@@ -305,6 +306,46 @@ function renderAuction(data) {
 /* Подписи колонок намеренно НЕ жаргонные. «Пол» и «уровень» — слова из
  * биржевого стакана, и на вопрос «это цена или не цена?» они не отвечают.
  * Пишем то, что человек увидит в игре. */
+/* Недельный ритм. Показывается, только когда истории хватает: рисовать
+ * «лучший час недели» по трём дням значит выдавать шум за расписание. */
+function renderRhythm(r) {
+  const card = $("#a-rhythm");
+  if (!r) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const body = $("#a-rhythm-body");
+
+  if (!r.enough) {
+    body.innerHTML =
+      `<div class="note">Накоплено ${r.days} сут из ${r.need_days} — ` +
+      `недельный рисунок пока не считаем, чтобы не выдать шум за расписание.</div>`;
+    return;
+  }
+
+  const cell = (c) => `${c.weekday} ${String(c.hour).padStart(2, "0")}:00`;
+  const buy = r.cheapest[0];
+  const sell = r.dearest[0];
+  body.innerHTML =
+    `<div class="rhythm">
+       <div class="rh">
+         <span class="rh-when">${cell(buy)}</span>
+         <span class="rh-what">дешевле всего · ${buy.deviation.toFixed(1)}%</span>
+       </div>
+       <div class="rh">
+         <span class="rh-when">${cell(sell)}</span>
+         <span class="rh-what">дороже всего · +${sell.deviation.toFixed(1)}%</span>
+       </div>
+       <div class="rh">
+         <span class="rh-when">${r.spread_pct.toFixed(1)}%</span>
+         <span class="rh-what">разброс внутри недели</span>
+       </div>
+     </div>
+     <div class="note">Брать в дешёвый час, продавать запасённое в дорогой.
+       ${r.reliable ? "" : "Истории пока " + r.days + " сут — рисунок ещё уточнится."}</div>`;
+}
+
 /* Полоса созревания. Существует ради одного вопроса, который иначе
  * пришлось бы задавать вслух: «а скорость товара уже работает?».
  * Приложение обязано отвечать на него само. */

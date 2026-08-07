@@ -517,6 +517,120 @@ def bargains(views: list[ItemView], limit: int = 12) -> list[ItemView]:
     return worth[:limit]
 
 
+# Недельный ритм: сколько суток истории нужно, чтобы вообще говорить, и
+# сколько — чтобы говорить уверенно. Клеток в неделе 168, а снимков в
+# сутки 24; за две недели на клетку приходится по два замера, за месяц —
+# по четыре. Меньше двух недель — гадание.
+RHYTHM_MIN_DAYS = 14
+RHYTHM_RELIABLE_DAYS = 28
+
+WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+
+def _deviations(series: pd.Series) -> pd.Series:
+    """Отклонение каждой точки от своего локального уровня, в процентах.
+
+    Нормализация ОБЯЗАТЕЛЬНА, и это тот же урок, что на жетоне: без неё
+    «ритм недели» выродился бы в «на этой неделе реагент подорожал».
+    Особенно здесь, вокруг патча, где цены ездят в разы за дни.
+    """
+    if len(series) < 24:
+        return pd.Series(dtype="float64")
+    baseline = series.rolling("7D", center=True, min_periods=6).median()
+    return ((series / baseline - 1) * 100).dropna()
+
+
+def rhythm(
+    region: str = config.PRIMARY_REGION, item_id: int | None = None, days: int = 60
+) -> dict | None:
+    """Внутринедельный рисунок цены: когда дешевле брать и когда дороже продавать.
+
+    По ВРЕМЕНИ EU-СЕРВЕРОВ, а не по омскому: ритм создают ресеты и
+    прайм-тайм, а живут они в серверном времени. Разница в четыре часа
+    сдвинула бы картину на треть суток.
+
+    Без item_id считается рынок ЦЕЛИКОМ: отклонения всех отслеживаемых
+    товаров сводятся в один пул. Так ритм виден в разы раньше, чем по
+    одному товару, — точек в 400 раз больше.
+
+    ДЛЯ ЖЕТОНА ХВАТАЛО ОДНОЙ СТОРОНЫ, ЗДЕСЬ НУЖНЫ ОБЕ. Жетон Карен только
+    покупает, поэтому там искали дно. Товары он и покупает, и продаёт —
+    значит одинаково важны самый дешёвый час (брать) и самый дорогой
+    (продавать запасённое).
+    """
+    table = frame(region)
+    if table.empty:
+        return None
+
+    cutoff = table.index.max() - pd.Timedelta(days=days)
+    table = table[table.index >= cutoff]
+    if table.empty:
+        return None
+
+    span_days = (table.index.max() - table.index.min()).total_seconds() / 86400
+
+    pool: list[pd.Series] = []
+    items = [item_id] if item_id is not None else table["item_id"].unique().tolist()
+    for one in items:
+        chunk = table[table["item_id"] == one]
+        if len(chunk) < 24:
+            continue
+        series = chunk["market"].astype(float)
+        series = series[~series.index.duplicated(keep="last")]
+        values = _deviations(series)
+        if not values.empty:
+            pool.append(values)
+
+    if not pool:
+        return None
+
+    values = pd.concat(pool)
+    local = values.tz_convert(config.SERVER_TZ)
+    grid = pd.DataFrame(
+        {
+            "deviation": local.values,
+            "weekday": local.index.weekday,
+            "hour": local.index.hour,
+        }
+    )
+
+    grouped = grid.groupby(["weekday", "hour"])["deviation"]
+    means, sizes = grouped.mean(), grouped.size()
+
+    cells = [
+        {
+            "weekday": WEEKDAYS[day],
+            "hour": int(hour),
+            "deviation": round(float(value), 2),
+            "count": int(sizes[(day, hour)]),
+        }
+        for (day, hour), value in means.items()
+        # Клетка на паре точек — шум, а не ритм.
+        if sizes[(day, hour)] >= 4
+    ]
+    if not cells:
+        return None
+
+    ordered = sorted(cells, key=lambda c: c["deviation"])
+    by_weekday = {
+        WEEKDAYS[day]: round(float(value), 2)
+        for day, value in grid.groupby("weekday")["deviation"].mean().items()
+    }
+    return {
+        "item_id": item_id,
+        "days": round(span_days, 1),
+        "points": int(len(values)),
+        "timezone": config.SERVER_TZ,
+        "cheapest": ordered[:3],  # когда брать
+        "dearest": ordered[-3:][::-1],  # когда продавать
+        "by_weekday": by_weekday,
+        "spread_pct": round(ordered[-1]["deviation"] - ordered[0]["deviation"], 2),
+        "enough": span_days >= RHYTHM_MIN_DAYS,
+        "reliable": span_days >= RHYTHM_RELIABLE_DAYS,
+        "need_days": RHYTHM_MIN_DAYS,
+    }
+
+
 def readiness(views: list[ItemView]) -> dict:
     """Что уже созрело, а что ещё копится.
 
@@ -546,6 +660,7 @@ def summary(region: str = config.PRIMARY_REGION, *, live: dict | None = None) ->
     stored = watchlist.load()
     return {
         "readiness": readiness(views),
+        "rhythm": rhythm(region),
         "region": region,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "watchlist_generated": stored.get("generated_utc"),
