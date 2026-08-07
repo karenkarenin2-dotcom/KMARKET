@@ -162,9 +162,16 @@ def _gold(copper: float) -> float:
     return round(copper / COPPER_PER_GOLD, 2)
 
 
-def frame(region: str = config.PRIMARY_REGION) -> pd.DataFrame:
+# Сколько последних месячных файлов читать. Трёх хватает и окну сравнения
+# (21 день), и недельному ритму (60 дней), с запасом на стык месяцев.
+# Без ограничения приложение с годами читало бы весь архив: замерено, что
+# 400 товаров дают 3.5 млн строк в год, и такое чтение занимает секунды.
+READ_MONTHS = 3
+
+
+def frame(region: str = config.PRIMARY_REGION, months: int = READ_MONTHS) -> pd.DataFrame:
     """История аукциона региона как таблица с индексом по времени."""
-    rows = storage.load_auction(region)
+    rows = storage.load_auction(region, months=months)
     if not rows:
         return pd.DataFrame(
             columns=[
