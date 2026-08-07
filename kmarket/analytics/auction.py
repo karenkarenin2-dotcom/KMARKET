@@ -82,6 +82,23 @@ SELL = "sell"
 # товара, а фаза патча, размазанная по списку. Молчание честнее.
 UNKNOWN = "unknown"
 
+# Сколько снимков нужно, чтобы говорить о ДВИЖЕНИИ товара. Снимки
+# часовые, так что это примерно столько же часов.
+MIN_POINTS_ACTIVITY = 12
+
+# Граница ID, с которой начинается текущее дополнение (Midnight, 12.x).
+# Способ приблизительный — Blizzard не отдаёт принадлежность предмета к
+# дополнению никаким полем, — но для разделения «текущее / старое» его
+# хватает: ID выдаются возрастающими блоками по мере выхода контента.
+#
+# ЗАЧЕМ ЭТО ВООБЩЕ. Замерено 2026-08-07: из 11 находок девять оказались
+# старьём, а у товаров Midnight доходность выкупа 2.5–7.8%. Текущее
+# дополнение смотрят все, там рынок эффективный. Большой спред на старом
+# товаре существует ИМЕННО ПОТОМУ, что его никто не мониторит — и по той
+# же причине продать выкупленное может быть некому. Метка нужна, чтобы
+# этот риск было видно, а не выяснять его кошельком.
+CURRENT_ERA_FROM_ID = 236_000
+
 # Минимальная доходность выкупа, ниже которой находка не находка.
 # Без неё порядок обманывал: «Огненная вода» с отдачей 41 тыс. стояла
 # выше «Затуманенного кристалла» с отдачей 25 тыс., хотя под первую надо
@@ -113,6 +130,8 @@ class ItemView:
     roi_pct: float = 0.0  # она же в процентах от вложения
     percentile: float | None = None  # положение цены в своей истории
     points: int = 0  # сколько замеров стоит за перцентилем
+    current_era: bool = True  # товар текущего дополнения
+    activity_pct: float | None = None  # движение запаса за час, % — см. _activity
     change_pct: float | None = None  # изменение рынка за окно
     supply_change_pct: float | None = None  # изменение предложения за окно
 
@@ -157,6 +176,38 @@ def frame(region: str = config.PRIMARY_REGION) -> pd.DataFrame:
     return table.set_index("updated").sort_index()
 
 
+def _activity(history: pd.DataFrame) -> float | None:
+    """Насколько живо шевелится запас товара, % от запаса за снимок.
+
+    ЧТО ЭТО ЧЕСТНО МЕРЯЕТ, А ЧТО НЕТ. Мы храним только свёртку стакана, а
+    не отдельные лоты, поэтому отличить «продали 100 штук» от «выставили
+    100 штук» невозможно: в обе стороны меняется одно и то же число.
+    Значит «объём продаж» отсюда не получить, и делать вид, что получили,
+    нельзя.
+
+    Зато прекрасно видно ДРУГОЕ: шевелится рынок вообще или стоит. Если
+    запас скачет от снимка к снимку — товар живой, его и покупают, и
+    доставляют. Если из часа в час лежит одно и то же число, значит лоты
+    просто висят, и выкупленный дешёвый хвост будет висеть точно так же.
+
+    Ровно на этот вопрос и нужен ответ, когда решаешь, выкупать ли
+    находку: не «сколько продадут», а «продадут ли вообще».
+
+    Берём МЕДИАНУ модуля изменения, а не среднее: одна поставка на
+    полмиллиона единиц иначе объявила бы мёртвый рынок живым.
+    """
+    if len(history) < MIN_POINTS_ACTIVITY:
+        return None
+    quantity = history["quantity"].astype(float)
+    typical = float(quantity.median())
+    if not typical:
+        return None
+    step = quantity.diff().abs().dropna()
+    if step.empty:
+        return None
+    return round(float(step.median()) / typical * 100, 1)
+
+
 def _percentile(series: pd.Series, current: float) -> float:
     """Доля моментов, когда было ДЕШЕВЛЕ текущего. 0 — исторический минимум."""
     if series.empty:
@@ -178,14 +229,32 @@ def _describe(view: ItemView, event: dict | None) -> None:
         )
         # Оговорка обязательна. Метрика меряет РАЗРЫВ в стакане, а не
         # спрос: выкупить дешёвый хвост можно всегда, а вот продастся ли
-        # он — вопрос скорости ухода товара, и до накопления истории
-        # ответа на него нет. Молчать об этом — значит выдавать
-        # арифметику за гарантию прибыли.
-        if view.points < MIN_POINTS:
+        # он — отдельный вопрос. Пока движение не измерено, об этом надо
+        # говорить прямо; когда измерено — говорить измеренное.
+        if view.activity_pct is None:
             reasons.append(
-                "Скорость продаж по этому товару мы ещё не мерили — выгода тут "
-                "арифметическая, а не обещанная. На залежалом товаре хвост можно "
-                "выкупить и остаться с ним."
+                f"Движение запаса ещё не измерено (нужно {MIN_POINTS_ACTIVITY} снимков, "
+                f"есть {view.points}) — выгода тут арифметическая, а не обещанная. "
+                f"На залежалом товаре хвост можно выкупить и остаться с ним."
+            )
+        elif view.activity_pct < 1.0:
+            reasons.append(
+                f"Запас почти не шевелится ({view.activity_pct}% за снимок) — рынок "
+                f"стоячий. Выкупить хвост можно, продать будет некому."
+            )
+        else:
+            reasons.append(
+                f"Запас шевелится на {view.activity_pct}% за снимок — рынок живой."
+            )
+
+        # Старый товар с большим спредом — это почти всегда не подарок, а
+        # предупреждение (замерено: 9 находок из 11 оказались старьём,
+        # тогда как у текущего дополнения доходность 2.5–7.8%).
+        if not view.current_era:
+            reasons.append(
+                "Товар не из текущего дополнения. Большой спред у такого обычно "
+                "оттого, что рынок никто не смотрит, — и по той же причине "
+                "перепродать бывает некому."
             )
 
     if view.percentile is None:
@@ -244,10 +313,21 @@ def _describe(view: ItemView, event: dict | None) -> None:
             if state == HOLD:
                 state = BUY
 
-    # Выкуп дешёвого хвоста перебивает всё: это арбитраж здесь и сейчас,
-    # он не зависит ни от перцентиля, ни от фазы патча.
-    if view.upside_gold >= MIN_UPSIDE_GOLD and view.roi_pct >= MIN_ROI_PCT:
+    # Выкуп дешёвого хвоста перебивает перцентиль и фазу патча: это
+    # арбитраж здесь и сейчас.
+    #
+    # НО ТОЛЬКО ЕСЛИ РЫНОК ЖИВОЙ. Ради этого и меряется движение: на
+    # стоячем товаре арбитраж существует лишь на бумаге — выкупить хвост
+    # можно, а продать его некому, и золото застревает в стопке реагентов.
+    # Пока движение не измерено, право говорить «брать» оставляем (иначе
+    # первые полсуток работы модуль молчал бы обо всём), но оговорка про
+    # неизмеренную скорость уже добавлена выше.
+    arbitrage = view.upside_gold >= MIN_UPSIDE_GOLD and view.roi_pct >= MIN_ROI_PCT
+    stalled = view.activity_pct is not None and view.activity_pct < 1.0
+    if arbitrage and not stalled:
         state = BUY
+    elif arbitrage and stalled and state == UNKNOWN:
+        state = HOLD
 
     view.state = state
     view.reasons = reasons
@@ -314,6 +394,8 @@ def board(
             else 0.0
         )
         view.points = int(len(history))
+        view.current_era = item_id >= CURRENT_ERA_FROM_ID
+        view.activity_pct = _activity(history)
 
         if view.points >= MIN_POINTS:
             view.percentile = _percentile(history["market"], market)
@@ -342,9 +424,33 @@ def bargains(views: list[ItemView], limit: int = 12) -> list[ItemView]:
         if v.upside_gold >= MIN_UPSIDE_GOLD
         and v.roi_pct >= MIN_ROI_PCT
         and v.lots >= 20
+        # Стоячий рынок из списка действий выбрасываем: там нечего делать.
+        # Из общей таблицы товар никуда не девается, со всеми своими
+        # числами, — просто перестаёт выдавать себя за возможность.
+        and not (v.activity_pct is not None and v.activity_pct < 1.0)
     ]
     worth.sort(key=lambda v: v.upside_gold, reverse=True)
     return worth[:limit]
+
+
+def readiness(views: list[ItemView]) -> dict:
+    """Что уже созрело, а что ещё копится.
+
+    Нужно, чтобы человеку НЕ ПРИХОДИЛОСЬ СПРАШИВАТЬ, заработала ли
+    скорость товара. Сборщик наполняет историю сам, и приложение обязано
+    само сказать, когда её стало достаточно.
+    """
+    if not views:
+        return {"points": 0, "activity": 0, "levels": 0, "total": 0}
+    points = max(v.points for v in views)
+    return {
+        "points": points,
+        "activity": sum(1 for v in views if v.activity_pct is not None),
+        "levels": sum(1 for v in views if v.percentile is not None),
+        "total": len(views),
+        "need_activity": MIN_POINTS_ACTIVITY,
+        "need_levels": MIN_POINTS,
+    }
 
 
 def summary(region: str = config.PRIMARY_REGION, *, live: dict | None = None) -> dict:
@@ -353,6 +459,7 @@ def summary(region: str = config.PRIMARY_REGION, *, live: dict | None = None) ->
     event = events.context()
     stored = watchlist.load()
     return {
+        "readiness": readiness(views),
         "region": region,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "watchlist_generated": stored.get("generated_utc"),
