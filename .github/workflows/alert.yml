@@ -41,6 +41,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Нужны для живого снимка аукциона: сливы скоропортящиеся, и
+          # смотреть на сохранённый час назад срез бессмысленно.
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
         run: python -m kmarket.alert ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
       - name: Сохранить состояние алертов
@@ -54,5 +58,8 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add data/alert_state.json
           git commit -m "alert: состояние на $(date -u '+%Y-%m-%d %H:%M') UTC"
-          git pull --rebase --autostash
+          # Без --autostash. Прятать здесь нечего (файл уже закоммичен), а
+          # именно автозаначка 2026-07-26 вписала маркеры конфликта прямо
+          # внутрь CSV с данными. Грабля не должна лежать на видном месте.
+          git pull --rebase
           git push
