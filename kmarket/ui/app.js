@@ -290,6 +290,8 @@ function renderAuction(data) {
         }.`
       : "");
 
+  renderReadiness(data.readiness);
+
   const bargains = data.bargains || [];
   $("#a-bargains").innerHTML = bargains.length
     ? `<div class="label" style="padding:6px 0 8px">Недооценённые прямо сейчас</div>
@@ -303,6 +305,27 @@ function renderAuction(data) {
 /* Подписи колонок намеренно НЕ жаргонные. «Пол» и «уровень» — слова из
  * биржевого стакана, и на вопрос «это цена или не цена?» они не отвечают.
  * Пишем то, что человек увидит в игре. */
+/* Полоса созревания. Существует ради одного вопроса, который иначе
+ * пришлось бы задавать вслух: «а скорость товара уже работает?».
+ * Приложение обязано отвечать на него само. */
+function renderReadiness(r) {
+  const box = $("#a-ready");
+  if (!r || !r.total) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const hours = r.points;
+  const bit = (done, need, what) =>
+    done
+      ? `<b>${what} — работает</b> (${done} из ${r.total} товаров)`
+      : `${what} — нужно ${need} снимков, есть ${hours}`;
+  box.innerHTML =
+    `<span class="rd">Накоплено снимков: <b>${hours}</b></span>` +
+    `<span class="rd">${bit(r.activity, r.need_activity, "движение товара")}</span>` +
+    `<span class="rd">${bit(r.levels, r.need_levels, "уровни цен")}</span>`;
+}
+
 function headRow() {
   return `<div class="row head">
     <span></span><span>Товар</span>
@@ -316,6 +339,16 @@ function headRow() {
 
 function row(it) {
   const rank = it.rank_of > 1 ? ` · ранг ${it.rank}` : "";
+  // Метка «старьё» и измеренное движение — два предупреждения, которые
+  // должны быть видны БЕЗ наведения: именно они отличают находку от
+  // ловушки, а по спреду они неразличимы.
+  const era = it.current_era
+    ? ""
+    : ` <span class="tag" title="Товар не из текущего дополнения: большой спред у такого обычно оттого, что рынок никто не смотрит">старьё</span>`;
+  const move =
+    it.activity_pct === null || it.activity_pct === undefined
+      ? ""
+      : ` · ${it.activity_pct < 1 ? "стоит" : "движение " + it.activity_pct + "%"}`;
   // Цветом отмечаем только то, где есть настоящие деньги. Порог тот же,
   // что в аналитике (MIN_UPSIDE_GOLD): два места, одно значение по смыслу.
   const deal = it.upside_gold >= 500 ? " is-deal" : "";
@@ -327,8 +360,8 @@ function row(it) {
     : `<span class="icon"></span>`;
   return `<div class="row" title="${escapeHtml((it.reasons || []).join("\n"))}">
     ${icon}
-    <span class="iname">${escapeHtml(it.name)}${rank}
-      <span class="isub">${escapeHtml(it.subclass || "")} · ${it.quantity.toLocaleString("ru-RU")} шт</span>
+    <span class="iname">${escapeHtml(it.name)}${rank}${era}
+      <span class="isub">${escapeHtml(it.subclass || "")} · ${it.quantity.toLocaleString("ru-RU")} шт${move}</span>
     </span>
     <span class="num">${goldFine(it.floor_gold)}</span>
     <span class="num soft">${goldFine(it.market_gold)}</span>
