@@ -502,6 +502,26 @@ body[data-max="1"] #btn-max .on-restore {
   color: var(--chip);
 }
 
+/* Оговорка о точности. Не плашка и не «жёлтый треугольник»: это не
+   ошибка, а свойство данных, и жить оно должно спокойным текстом с
+   отбивкой линией — как всё остальное в этой системе. */
+.caveat {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.caveat b {
+  font-weight: 400;
+  color: var(--chip);
+}
+
+.caveat .warn {
+  color: var(--accent);
+}
+
 /* ---------- недельный ритм ---------- */
 
 .rhythm {
