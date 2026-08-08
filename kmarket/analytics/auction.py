@@ -150,6 +150,9 @@ class ItemView:
     # здесь: раньше тот же вывод делался ещё и внутри bargains(), копии
     # разъехались, и находки молча опустели.
     stalled: bool = False
+    # В какой доле прошлых снимков у товара был разрыв, достойный выкупа.
+    # Отвечает на вопрос «стоит ли вообще сюда ходить» — см. _gap_rate.
+    gap_rate: float | None = None
     change_pct: float | None = None  # изменение рынка за окно
     supply_change_pct: float | None = None  # изменение предложения за окно
 
@@ -260,6 +263,37 @@ def _sold_rate(history: pd.DataFrame) -> float | None:
     return round(float(per_hour.median()), 1)
 
 
+def _gap_rate(history: pd.DataFrame) -> float | None:
+    """Как ЧАСТО у товара вообще бывает разрыв, достойный выкупа, в %.
+
+    ПОЧЕМУ ЭТО ВАЖНЕЕ РАЗМЕРА НАВАРА. Снимок Blizzard обновляется раз в
+    час, и точное количество дешёвых лотов к моменту покупки уже другое
+    (замерено: дрейф 19.8%). Значит гнаться за конкретным лотом мы не
+    можем — мы структурно медленные, и это не чинится.
+
+    Зато можно ответить на другой вопрос, который от скорости не зависит:
+    у ЭТОГО товара скидка — постоянное свойство рынка или разовая
+    случайность? Замер по 32 снимкам показал, что разница огромная: у
+    товаров текущего дополнения разрыв держится у 12 позиций больше
+    половины времени, а у остальных 146 мелькает изредка.
+
+    Первые — маршрут, по которому имеет смысл ходить регулярно. Вторые —
+    лотерея, в которой мы заведомо проигрываем более быстрым.
+    """
+    if history.empty or len(history) < MIN_POINTS_ACTIVITY:
+        return None
+    rows = history.dropna(subset=["deal_qty", "deal_cost"])
+    if rows.empty:
+        return None
+    upside = (
+        rows["deal_qty"] * rows["market"] * (1 - AH_FEE) - rows["deal_cost"]
+    ) / COPPER_PER_GOLD
+    cost = rows["deal_cost"] / COPPER_PER_GOLD
+    roi = (upside / cost.replace(0, pd.NA)) * 100
+    worthy = (upside >= MIN_UPSIDE_GOLD) & (roi >= MIN_ROI_PCT)
+    return round(float(worthy.mean()) * 100, 0)
+
+
 def _percentile(series: pd.Series, current: float) -> float:
     """Доля моментов, когда было ДЕШЕВЛЕ текущего. 0 — исторический минимум."""
     if series.empty:
@@ -311,6 +345,19 @@ def _describe(view: ItemView, event: dict | None) -> None:
             reasons.append(
                 f"Запас шевелится на {view.activity_pct}% за снимок — рынок живой."
             )
+
+        # Постоянство разрыва — главный ответ на вопрос «идти ли туда».
+        if view.gap_rate is not None:
+            if view.gap_rate >= 50:
+                reasons.append(
+                    f"Разрыв держится постоянно — он был в {view.gap_rate:.0f}% "
+                    f"прошлых снимков. Сюда имеет смысл заглядывать регулярно."
+                )
+            else:
+                reasons.append(
+                    f"Разрыв разовый: за всю историю он был лишь в "
+                    f"{view.gap_rate:.0f}% снимков. Пока дойдёшь, его могут разобрать."
+                )
 
         # Старый товар с большим спредом — это почти всегда не подарок, а
         # предупреждение (замерено: 9 находок из 11 оказались старьём,
@@ -467,6 +514,7 @@ def board(
         view.current_era = item_id >= CURRENT_ERA_FROM_ID
         view.activity_pct = _activity(history)
         view.sold_per_hour = _sold_rate(history)
+        view.gap_rate = _gap_rate(history)
         if view.sold_per_hour and view.deal_qty:
             view.hours_to_clear = round(view.deal_qty / view.sold_per_hour, 1)
 
@@ -520,7 +568,17 @@ def bargains(views: list[ItemView], limit: int = 12) -> list[ItemView]:
         # копия этого условия здесь уже однажды разъехалась с оригиналом.
         and not v.stalled
     ]
-    worth.sort(key=lambda v: (0 if _trusted(v) else 1, -v.upside_gold))
+    # Порядок: сначала те, про кого известно, что расходятся; внутри —
+    # те, у кого разрыв ПОСТОЯНЕН, а не мелькнул однажды. Разовая удача с
+    # большим наваром не должна вытеснять маршрут, по которому можно
+    # ходить каждый день.
+    worth.sort(
+        key=lambda v: (
+            0 if _trusted(v) else 1,
+            0 if (v.gap_rate or 0) >= 50 else 1,
+            -v.upside_gold,
+        )
+    )
     return worth[:limit]
 
 

@@ -437,6 +437,15 @@ function row(it) {
   } else if (it.activity_pct !== null && it.activity_pct !== undefined) {
     move = ` · ${it.activity_pct < 1 ? "стоит" : "движение " + it.activity_pct + "%"}`;
   }
+  // Постоянство разрыва: главный ответ на «идти ли туда». Точное
+  // количество мы всё равно не знаем (снимок часовой), а вот бывает ли
+  // тут скидка вообще — знаем хорошо.
+  if (it.gap_rate !== null && it.gap_rate !== undefined) {
+    move +=
+      it.gap_rate >= 50
+        ? ` · <span class="perm">скидка в ${it.gap_rate}% снимков</span>`
+        : ` · разовая (${it.gap_rate}%)`;
+  }
   // Цветом отмечаем только то, где есть настоящие деньги. Порог тот же,
   // что в аналитике (MIN_UPSIDE_GOLD): два места, одно значение по смыслу.
   const deal = it.upside_gold >= 500 ? " is-deal" : "";
