@@ -70,6 +70,9 @@ class Quote:
     lots: int  # число лотов
     deal_qty: int = 0  # единиц дешевле уровня восстановления
     deal_cost: int = 0  # медь, чтобы выкупить их все
+    # Сколько единиц уже стоит ПО цене восстановления. Это очередь, в
+    # которую встанет перекупщик, когда перевыставит купленное.
+    wall_qty: int = 0
 
     @property
     def depth_gold(self) -> float:
@@ -135,7 +138,7 @@ def sold_between(prev: Snapshot, curr: Snapshot) -> dict[int, int]:
     return gone
 
 
-def _fold(book: list[tuple[int, int]]) -> tuple[int, int, int, int, int, int]:
+def _fold(book: list[tuple[int, int]]) -> tuple[int, int, int, int, int, int, int]:
     """Стакан [(цена, количество), ...] → показатели предмета.
 
     Возвращает (floor, market, quantity, lots, deal_qty, deal_cost).
@@ -166,7 +169,13 @@ def _fold(book: list[tuple[int, int]]) -> tuple[int, int, int, int, int, int]:
         deal_qty += quantity
         deal_cost += price * quantity
 
-    return floor, market, total, len(book), deal_qty, deal_cost
+    # Сколько уже стоит ПО цене восстановления — это очередь, в которую
+    # встанешь при перевыставлении. Без неё расчёт навара льстит:
+    # выкупить хвост из 25 тысяч перед стеной в 210 тысяч можно, а вот
+    # продать — только после того, как стена разойдётся.
+    wall_qty = sum(quantity for price, quantity in book if price == market)
+
+    return floor, market, total, len(book), deal_qty, deal_cost, wall_qty
 
 
 def fetch(

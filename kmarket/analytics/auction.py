@@ -117,6 +117,18 @@ MIN_ROI_PCT = 5.0
 # вложить в другой товар, даже с меньшим наваром.
 MAX_HOURS_TO_CLEAR = 168.0
 
+# Во сколько раз очередь по цене перепродажи может превышать твою покупку,
+# прежде чем сделка перестанет быть сделкой.
+#
+# ПОЧЕМУ ЭТО ВАЖНЕЕ ВСЕГО ОСТАЛЬНОГО. Разрыв в цене ничего не стоит, если
+# перевыставленное встаёт в конец огромной очереди. Проверено золотом на
+# «Сущности маназмея»: хвост 25 414 шт выкуплен, а по цене перепродажи
+# уже стояло 209 984 шт — в восемь раз больше. Продалось 19 штук.
+#
+# Очередь видна из ПЕРВОГО ЖЕ снимка и никакой истории не требует,
+# поэтому предупреждение работает сразу, в отличие от срока распродажи.
+MAX_WALL_RATIO = 3.0
+
 
 @dataclass
 class ItemView:
@@ -145,7 +157,9 @@ class ItemView:
     current_era: bool = True  # товар текущего дополнения
     activity_pct: float | None = None  # движение запаса за час, % — см. _activity
     sold_per_hour: float | None = None  # единиц уходит с прилавка в час
-    hours_to_clear: float | None = None  # за сколько разойдётся выкупленный хвост
+    hours_to_clear: float | None = None  # за сколько дойдёт очередь до тебя
+    wall_qty: int = 0  # сколько единиц уже стоит по цене перепродажи
+    wall_ratio: float = 0.0  # во сколько раз очередь длиннее твоей покупки
     # Рынок стоячий. Решение принимается ОДИН раз в _describe и лежит
     # здесь: раньше тот же вывод делался ещё и внутри bargains(), копии
     # разъехались, и находки молча опустели.
@@ -188,6 +202,7 @@ def frame(region: str = config.PRIMARY_REGION, months: int = READ_MONTHS) -> pd.
             "deal_cost",
             "sold_qty",
             "sold_hours",
+            "wall_qty",
         ]
         ).set_index("updated")
     table = pd.DataFrame(
@@ -202,6 +217,7 @@ def frame(region: str = config.PRIMARY_REGION, months: int = READ_MONTHS) -> pd.
             "deal_cost",
             "sold_qty",
             "sold_hours",
+            "wall_qty",
         ]
     )
     table["updated"] = pd.to_datetime(table["updated"], utc=True)
@@ -325,10 +341,16 @@ def _describe(view: ItemView, event: dict | None) -> None:
                 if view.hours_to_clear < 48
                 else f"{view.hours_to_clear / 24:.1f} сут"
             )
+            wall = f"{view.wall_qty:,}".replace(",", " ")
             reasons.append(
-                f"С прилавка уходит около {view.sold_per_hour:.0f} шт/ч — выкупленный "
-                f"хвост разойдётся примерно за {срок}. Это верхняя оценка: снятие "
-                f"лота продавцом снаружи неотличимо от покупки."
+                f"По цене перепродажи УЖЕ стоит {wall} шт — встанешь за ними. "
+                f"При скорости {view.sold_per_hour:.0f} шт/ч очередь дойдёт до тебя "
+                f"примерно за {срок}."
+            )
+            reasons.append(
+                "И это оптимистично: скорость измерена, пока товар стоил дёшево. "
+                "По цене выше спрос обычно падает — проверено на «Сущности "
+                "маназмея», где после выкупа хвоста продажи почти встали."
             )
         elif view.activity_pct is None:
             reasons.append(
@@ -344,6 +366,16 @@ def _describe(view: ItemView, event: dict | None) -> None:
         else:
             reasons.append(
                 f"Запас шевелится на {view.activity_pct}% за снимок — рынок живой."
+            )
+
+        # Очередь перед тобой. Видна сразу, истории не требует, и именно
+        # она чаще всего убивает сделку, которая по арифметике хороша.
+        if view.wall_ratio and view.wall_ratio > MAX_WALL_RATIO:
+            wall = f"{view.wall_qty:,}".replace(",", " ")
+            reasons.append(
+                f"⚠ По цене перепродажи уже стоит {wall} шт — это в "
+                f"{view.wall_ratio:.0f} раз больше того, что ты купишь. "
+                f"Перевыставленное встанет в конец этой очереди."
             )
 
         # Постоянство разрыва — главный ответ на вопрос «идти ли туда».
@@ -441,6 +473,10 @@ def _describe(view: ItemView, event: dict | None) -> None:
         view.stalled = view.hours_to_clear > MAX_HOURS_TO_CLEAR
     else:
         view.stalled = view.activity_pct is not None and view.activity_pct < 1.0
+    # Длинная очередь по цене перепродажи запирает деньги не хуже мёртвого
+    # рынка, и видна она сразу — не дожидаясь измерения скорости.
+    if view.wall_ratio and view.wall_ratio > MAX_WALL_RATIO:
+        view.stalled = True
     if arbitrage and not view.stalled:
         state = BUY
     elif arbitrage and view.stalled and state == UNKNOWN:
@@ -488,11 +524,13 @@ def board(
             floor, market = quote.floor, quote.market
             quantity, lots = quote.quantity, quote.lots
             deal_qty, deal_cost = quote.deal_qty, quote.deal_cost
+            wall_qty = quote.wall_qty
         elif not history.empty:
             last = history.iloc[-1]
             floor, market = int(last["floor"]), int(last["market"])
             quantity, lots = int(last["quantity"]), int(last["lots"])
             deal_qty, deal_cost = int(last["deal_qty"]), int(last["deal_cost"])
+            wall_qty = int(last.get("wall_qty") or 0)
         else:
             continue  # ни живого снимка, ни истории — показывать нечего
 
@@ -515,8 +553,19 @@ def board(
         view.activity_pct = _activity(history)
         view.sold_per_hour = _sold_rate(history)
         view.gap_rate = _gap_rate(history)
+        view.wall_qty = wall_qty
+        view.wall_ratio = round(wall_qty / deal_qty, 1) if deal_qty else 0.0
         if view.sold_per_hour and view.deal_qty:
-            view.hours_to_clear = round(view.deal_qty / view.sold_per_hour, 1)
+            # СЧИТАЕМ ОЧЕРЕДЬ, А НЕ СВОЙ ХВОСТ. Перевыставив купленное по
+            # цене восстановления, ты встаёшь ЗА теми, кто уже стоит по
+            # этой цене. Раньше здесь делилось только своё количество, и
+            # метрика обещала «разойдётся за 3 часа» там, где впереди
+            # стояла стена на 210 тысяч единиц. Карен проверил это
+            # золотом: выкупил хвост «Сущности маназмея», перевыставил и
+            # продал 19 штук.
+            view.hours_to_clear = round(
+                (view.wall_qty + view.deal_qty) / view.sold_per_hour, 1
+            )
 
         if view.points >= MIN_POINTS:
             view.percentile = _percentile(history["market"], market)

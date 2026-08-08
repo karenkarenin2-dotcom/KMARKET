@@ -125,11 +125,12 @@ AUCTION_HEADER = (
     # продалось», а пусто — «не измеряли».
     "sold_qty",
     "sold_hours",
+    "wall_qty",
 )
 
 AuctionKey = tuple[datetime, int]
-# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours
-AuctionRow = tuple[int, int, int, int, int, int, int | None, float | None]
+# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours, wall_qty
+AuctionRow = tuple[int, int, int, int, int, int, int | None, float | None, int]
 
 
 def _maybe_int(value: str | None) -> int | None:
@@ -173,6 +174,7 @@ def read_auction_month(path: Path) -> dict[AuctionKey, AuctionRow]:
                     # и «продалось ноль» — разные вещи.
                     _maybe_int(row.get("sold_qty")),
                     _maybe_float(row.get("sold_hours")),
+                    int(row.get("wall_qty") or 0),
                 )
             except (KeyError, ValueError, TypeError):
                 continue
@@ -228,6 +230,7 @@ def append_auction(
             # Предмет, которого в sold нет, но измерение было, продал ноль.
             (sold.get(item_id, 0) if sold is not None else None),
             (round(sold_hours, 2) if sold is not None and sold_hours else None),
+            quote.wall_qty,
         )
         added += 1
 

@@ -431,7 +431,12 @@ function row(it) {
   let move = "";
   if (it.hours_to_clear !== null && it.hours_to_clear !== undefined) {
     const h = it.hours_to_clear;
-    move = ` · разойдётся за ${h < 48 ? Math.round(h) + " ч" : (h / 24).toFixed(1) + " сут"}`;
+    const t = h < 48 ? Math.round(h) + " ч" : (h / 24).toFixed(1) + " сут";
+    // Очередь важнее срока: именно она объясняет, почему срок такой.
+    const q = it.wall_qty
+      ? ` (в очереди ${it.wall_qty.toLocaleString("ru-RU")} шт)`
+      : "";
+    move = ` · продашь через ~${t}${q}`;
   } else if (it.sold_per_hour !== null && it.sold_per_hour !== undefined) {
     move = ` · уходит ${it.sold_per_hour} шт/ч`;
   } else if (it.activity_pct !== null && it.activity_pct !== undefined) {
@@ -462,7 +467,12 @@ function row(it) {
     </span>
     <span class="num">${goldFine(it.floor_gold)}</span>
     <span class="num soft">${goldFine(it.market_gold)}</span>
-    <span class="num soft">${it.deal_qty ? gold(it.deal_cost_gold) : "—"}</span>
+    <span class="num soft">${
+      it.deal_qty
+        ? gold(it.deal_cost_gold) +
+          `<span class="sub">${it.deal_qty.toLocaleString("ru-RU")} шт</span>`
+        : "—"
+    }</span>
     <span class="num gap${deal}">${it.upside_gold >= 1 ? "+" + gold(it.upside_gold) : "—"}</span>
     <span class="state" data-state="${it.state}">${words[it.state] || ""}</span>
   </div>`;
