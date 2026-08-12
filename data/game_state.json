@@ -1,13 +1,20 @@
 {
  "build": "12.0.7",
  "mplus_season": {
-  "id": 17,
-  "started": "2026-03-18"
+  "id": 18,
+  "started": "2026-08-12"
  },
  "pvp_season": {
   "id": 41,
   "started": null
  },
- "checked_utc": "2026-08-12T02:33:18+00:00",
- "detected": []
+ "checked_utc": "2026-08-12T04:54:29+00:00",
+ "detected": [
+  {
+   "kind": "season",
+   "label": "Сезон Мифик+ 18",
+   "date": "2026-08-12",
+   "source": "обнаружено по номеру сезона"
+  }
+ ]
 }
