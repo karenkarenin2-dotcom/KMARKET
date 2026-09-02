@@ -1,17 +1,16 @@
 {
   "eu": {
-    "verdict": "buy",
+    "verdict": "wait",
     "deep_bottom": false,
     "events_notified": [],
     "auction_seen": [
       4304,
       255847,
-      219949,
-      253403,
-      241334,
-      238520
+      238376,
+      12811,
+      238198
     ],
     "stale_reminded": "2026-09-01"
   },
-  "_updated": "2026-09-02T14:18:29.476602+00:00"
+  "_updated": "2026-09-02T18:32:57.309869+00:00"
 }
