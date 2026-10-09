@@ -209,6 +209,38 @@ def _trim_cache() -> None:
         pass
 
 
+def _drop_stale_cache() -> None:
+    """Снести кэш WebView2, если вёрстка изменилась с прошлого запуска.
+
+    ПОЧЕМУ ЭТО ОБЯЗАТЕЛЬНО (поймано 2026-08-09). Карен обновил приложение
+    и увидел ПОЛОВИНУ правки: заголовки секций отзывались на клик (новый
+    app.js), а сворачиваться отказывались (старый style.css из кэша).
+    Выглядит это как поломка логики, и искать её человек идёт не туда —
+    в саму логику.
+
+    Считаем отпечаток по времени изменения файлов ui/. Совпал — кэш
+    оставляем (он экономит запуск), разошёлся — сносим целиком: пусть
+    WebView2 перечитает всё. Выборочная чистка чужого кэша — способ
+    получить непредсказуемо сломанный движок.
+    """
+    try:
+        stamp = "|".join(
+            f"{path.name}:{path.stat().st_mtime_ns}"
+            for path in sorted(UI_DIR.glob("*"))
+            if path.is_file()
+        )
+        marker = config.CACHE_DIR / "ui.stamp"
+        if marker.exists() and marker.read_text(encoding="utf-8") == stamp:
+            return
+        if config.CACHE_DIR.exists():
+            shutil.rmtree(config.CACHE_DIR, ignore_errors=True)
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        marker.write_text(stamp, encoding="utf-8")
+        print("[KMARKET] Вёрстка изменилась — кэш WebView2 сброшен.")
+    except OSError:
+        pass  # не смогли — значит покажем как есть, ронять запуск незачем
+
+
 def main() -> int:
     global WINDOW
 
@@ -234,6 +266,10 @@ def main() -> int:
     # кэш один на все запуски, и мы можем сами его подрезать.
     config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _trim_cache()
+    # После подрезки по размеру — проверка на свежесть вёрстки. Порядок
+    # важен: _trim_cache может снести папку целиком, и отпечаток тогда
+    # запишется в чистую.
+    _drop_stale_cache()
 
     try:
         webview.start(

@@ -126,11 +126,23 @@ AUCTION_HEADER = (
     "sold_qty",
     "sold_hours",
     "wall_qty",
+    # Сколько ДЕШЁВЫХ единиц (ниже уровня восстановления) выставили заново
+    # за тот же отрезок. Пара к sold_qty и меряется тем же способом —
+    # сравнением id лотов, только в другую сторону.
+    #
+    # Без этого числа нельзя ответить на главный вопрос перекупки: обгоняет
+    # ли спрос подвоз нового дешёвого товара. Продажи в отрыве от притока
+    # обманывают — товар может отлично уходить и при этом вечно оставаться
+    # подрезанным, потому что снизу непрерывно встают новые продавцы.
+    "added_qty",
 )
 
 AuctionKey = tuple[datetime, int]
-# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours, wall_qty
-AuctionRow = tuple[int, int, int, int, int, int, int | None, float | None, int]
+# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours,
+# wall_qty, added_qty
+AuctionRow = tuple[
+    int, int, int, int, int, int, int | None, float | None, int, int | None
+]
 
 
 def _maybe_int(value: str | None) -> int | None:
@@ -175,6 +187,9 @@ def read_auction_month(path: Path) -> dict[AuctionKey, AuctionRow]:
                     _maybe_int(row.get("sold_qty")),
                     _maybe_float(row.get("sold_hours")),
                     int(row.get("wall_qty") or 0),
+                    # Тоже None при пустом: «не измеряли» и «никто ничего
+                    # не выставил» — разные новости.
+                    _maybe_int(row.get("added_qty")),
                 )
             except (KeyError, ValueError, TypeError):
                 continue
@@ -200,6 +215,7 @@ def append_auction(
     item_ids: list[int],
     sold: dict[int, int] | None = None,
     sold_hours: float | None = None,
+    added_supply: dict[int, int] | None = None,
 ) -> int:
     """Дописать снимок по списку слежки. Возвращает число новых строк.
 
@@ -231,6 +247,7 @@ def append_auction(
             (sold.get(item_id, 0) if sold is not None else None),
             (round(sold_hours, 2) if sold is not None and sold_hours else None),
             quote.wall_qty,
+            (added_supply.get(item_id, 0) if added_supply is not None else None),
         )
         added += 1
 
@@ -342,6 +359,49 @@ def load_auction(
         for moment, item in sorted(rows)
         if item_id is None or item == item_id
     ]
+
+
+def load_wide(
+    region: str, item_ids: set[int] | None = None, days: int | None = None
+) -> list[tuple[datetime, int, int, int, int]]:
+    """Широкий срез: [(момент, предмет, пол, рынок, количество), ...].
+
+    ЗАЧЕМ ЧИТАТЬ ЕГО, КОГДА ЕСТЬ УЗКАЯ ИСТОРИЯ. Узкая пишется только по
+    списку слежки, а список до 2026-08-09 набирался по обороту — значит по
+    реагентам, попавшим в слежку позже (по РОЛИ), узкой истории нет вовсе.
+    Широкий срез всё это время писал ВЕСЬ аукцион четыре раза в сутки, и
+    для вопроса «дорого ли сейчас» его частоты достаточно: позиционная
+    сделка живёт неделями, а не часами.
+
+    Полей здесь меньше (нет глубины хвоста) — для цены и запаса хватает.
+    """
+    directory = config.AUCTION_WIDE_DIR / region
+    if not directory.exists():
+        return []
+    files = sorted(directory.glob("*.csv"))
+    if days:
+        files = files[-days:]
+    rows: list[tuple[datetime, int, int, int, int]] = []
+    for path in files:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    item_id = int(row["item_id"])
+                    if item_ids is not None and item_id not in item_ids:
+                        continue
+                    rows.append(
+                        (
+                            _parse(row["updated_utc"]),
+                            item_id,
+                            int(row["floor_copper"]),
+                            int(row["market_copper"]),
+                            int(row["quantity"]),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError):
+                    continue  # битая строка не повод терять срез
+    rows.sort()
+    return rows
 
 
 def load_history(region: str) -> list[tuple[datetime, int]]:

@@ -89,9 +89,13 @@ function markRegion() {
   );
 }
 
-$$(".range").forEach((btn) =>
+/* ТОЛЬКО КНОПКИ ВНУТРИ #ranges. Класс .range носит ещё и «обновить» на
+ * вкладке аукциона — при выборке по одному классу клик по ней снимал
+ * подсветку периода и уводил state.days в NaN, после чего график
+ * переставал перерисовываться. */
+$$("#ranges .range").forEach((btn) =>
   btn.addEventListener("click", () => {
-    $$(".range").forEach((b) => b.classList.toggle("is-on", b === btn));
+    $$("#ranges .range").forEach((b) => b.classList.toggle("is-on", b === btn));
     state.days = Number(btn.dataset.days);
     drawChart();
   })
@@ -298,13 +302,16 @@ function renderAuction(data) {
   renderReadiness(data.readiness);
   renderRhythm(data.rhythm);
 
-  const bargains = data.bargains || [];
-  $("#a-bargains").innerHTML = bargains.length
-    ? `<div class="label" style="padding:6px 0 8px">Недооценённые прямо сейчас</div>
-       <div class="rows">${headRow()}${bargains.map(row).join("")}</div>
-       <div style="height:12px"></div>`
-    : "";
+  renderStockpile(data.stockpile);
+  renderCraft(data.craft);
 
+  // РАЗРЫВЫ В СТАКАНЕ УБРАНЫ ИЗ ОКНА (решение Карена 2026-08-09). Дважды
+  // проверены на живом рынке, и оба раза сделки не существовало: хвост
+  // съедали за минуты, пока наш снимок ждал своего часа. Расчёт остался
+  // в analytics.bargains — если такт Blizzard когда-нибудь ускорится,
+  // возвращать будет нечего заново писать.
+
+  foldSum("#a-rows-sum", plural(data.items.length, "товар", "товара", "товаров"));
   $("#a-rows").innerHTML = headRow() + data.items.map(row).join("");
 }
 
@@ -350,6 +357,10 @@ function renderRhythm(r) {
     return;
   }
   card.hidden = false;
+  foldSum(
+    "#a-rhythm-sum",
+    r.enough ? `размах ${r.spread_pct}%` : `копим, ${r.days} из ${r.need_days} сут`
+  );
   const body = $("#a-rhythm-body");
 
   if (!r.enough) {
@@ -399,23 +410,236 @@ function renderReadiness(r) {
   box.innerHTML =
     `<span class="rd">Накоплено снимков: <b>${hours}</b></span>` +
     `<span class="rd">${
-      r.sold
-        ? `<b>скорость продаж — работает</b> (${r.sold} из ${r.total} товаров)`
-        : `скорость продаж — нужно ${r.need_sold} измеренных переходов`
+      r.planned
+        ? `<b>скорость и подрезание — меряются</b> (${r.planned} из ${r.total} товаров)`
+        : `скорость и подрезание — нужно ${r.need_sold} измеренных переходов`
     }</span>` +
+    // Пока чистая скорость не измерена, размер сделки считается по одному
+    // кошельку, и это НЕ то же самое, что посчитанная сделка. Молчать об
+    // этом нельзя: разница видна только тому, кто знает, куда смотреть.
+    (r.planned
+      ? ""
+      : `<span class="rd">размер сделки пока по банку ${(r.budget_gold || 0).toLocaleString("ru-RU")} з, не по сбыту</span>`) +
     `<span class="rd">${bit(r.activity, r.need_activity, "движение товара")}</span>` +
     `<span class="rd">${bit(r.levels, r.need_levels, "уровни цен")}</span>`;
+}
+
+/* ---------- сворачиваемые секции ----------
+ *
+ * Просьба Карена 2026-08-09: «всё так хаотично и непонятно». Секций стало
+ * шесть, и открывались они разом.
+ *
+ * Состояние запоминается: человек сворачивает то, чем не пользуется, и
+ * ждёт, что завтра оно останется свёрнутым. Без памяти сворачивание
+ * превращается в лишний клик при каждом запуске. */
+const FOLD_KEY = "kmarket.folds";
+
+function foldState() {
+  try {
+    return JSON.parse(localStorage.getItem(FOLD_KEY)) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function setFold(section, closed) {
+  section.classList.toggle("is-closed", closed);
+  const mark = section.querySelector(".fold-mark");
+  if (mark) mark.textContent = closed ? "+" : "−";
+  const saved = foldState();
+  saved[section.dataset.fold] = closed;
+  try {
+    localStorage.setItem(FOLD_KEY, JSON.stringify(saved));
+  } catch (e) {
+    /* приватный режим вебвью — не повод ломать интерфейс */
+  }
+}
+
+function initFolds() {
+  const saved = foldState();
+  document.querySelectorAll(".fold").forEach((section) => {
+    const key = section.dataset.fold;
+    if (key in saved) {
+      section.classList.toggle("is-closed", saved[key]);
+      const mark = section.querySelector(".fold-mark");
+      if (mark) mark.textContent = saved[key] ? "+" : "−";
+    }
+    const head = section.querySelector(".fold-head");
+    if (head) {
+      head.addEventListener("click", () =>
+        setFold(section, !section.classList.contains("is-closed"))
+      );
+    }
+  });
+}
+
+/* Короткая сводка в заголовке. Нужна именно свёрнутой секции: без неё
+ * сворачивание прячет и сам факт, что внутри что-то есть. */
+function foldSum(id, text) {
+  const box = $(id);
+  if (box) box.textContent = text || "";
+}
+
+/* Русское склонение после числа: «1 рецепт», «2 рецепта», «5 рецептов».
+ * Мелочь, но «1 рецептов» в интерфейсе читается как недоделка. */
+function plural(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${n} ${one}`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} ${few}`;
+  return `${n} ${many}`;
+}
+
+/* Запас под цикл патча — главный ответ модуля после разворота 2026-08-09.
+ *
+ * Показываем РОЛЬ (в скольких рецептах предмет нужен) рядом с ценой,
+ * потому что вместе они и составляют довод: «нужен многим и стоит дёшево».
+ * По отдельности каждое число обманывает — оборот большой у всякого хлама,
+ * а дешевизна сама по себе ничего не обещает. */
+function renderStockpile(s) {
+  const box = $("#a-stockpile");
+  if (!s || !(s.candidates || []).length) {
+    box.innerHTML = `<div class="note">Пока нечего предложить: сырьё текущего
+      дополнения либо не отслеживается, либо не торгуется на товарном аукционе.</div>`;
+    foldSum("#a-stockpile-sum", "");
+    return;
+  }
+  const next = (s.upcoming || [])[0];
+  const when = next
+    ? `${next.label} — через ${next.in_days} дн`
+    : "ближайшее событие неизвестно";
+
+  // КОЛИЧЕСТВ ЗДЕСЬ НЕТ. Они дрейфуют на 19.8% за час (у 23% товаров —
+  // больше 50%), тогда как цена — на 0.3%. Строить главный экран на самом
+  // шатком числе значит выдавать догадку за расчёт; сколько брать, видно
+  // на живом прилавке.
+  const rows = s.candidates
+    .map((c) => {
+      const level =
+        c.percentile !== null && c.percentile !== undefined
+          ? `${Math.round(c.percentile)}<span class="sub">${
+              c.percentile <= 25 ? "дёшево" : c.percentile >= 75 ? "дорого" : "середина"
+            }</span>`
+          : `—<span class="sub">истории мало</span>`;
+      const move =
+        c.change_pct !== null && c.change_pct !== undefined
+          ? `${c.change_pct > 0 ? "+" : ""}${Math.round(c.change_pct)}%`
+          : "—";
+      return `<div class="row" title="${escapeHtml(
+        (c.professions || []).join(", ")
+      )}">
+        ${c.icon ? `<img class="icon" src="${c.icon}" alt="">` : `<span class="icon"></span>`}
+        <span class="iname">${escapeHtml(c.name)}
+          <span class="isub">нужен в ${plural(
+            c.recipes,
+            "рецепте",
+            "рецептах",
+            "рецептах"
+          )} · ${escapeHtml((c.professions || []).slice(0, 2).join(", "))}</span>
+        </span>
+        <span class="num">${goldFine(c.floor_gold)}</span>
+        <span class="num soft">${level}</span>
+        <span class="num soft">${move}</span>
+      </div>`;
+    })
+    .join("");
+
+  foldSum("#a-stockpile-sum", when);
+  box.innerHTML = `
+    <div class="note" style="margin-bottom:8px">Реагенты, которые нужны для крафта
+    в текущем дополнении, отсортированы по «нужен многим и стоит дёшево».
+    Смысл прост: набрать сейчас и продать в спрос, когда все сядут крафтить.
+    Сколько брать — смотри на живом прилавке: количество в снимке дрейфует
+    на десятки процентов за час, цена — на доли. ${escapeHtml(s.note)}</div>
+    <div class="rows">
+      <div class="row head">
+        <span></span><span>Реагент</span>
+        <span class="num" title="Цена самого дешёвого лота в последнем снимке">Цена</span>
+        <span class="num" title="Место текущей цены среди её же значений за окно сравнения: 0 — дешевле не было">Уровень</span>
+        <span class="num" title="На сколько изменилась цена за окно сравнения">За окно</span>
+      </div>
+      ${rows}
+    </div>`;
+}
+
+/* Крафт-маржа. Здесь важнее всего честно показать НЕПОЛНУЮ себестоимость:
+ * у рецептов со слотами качества настоящее сырьё дороже, и без пометки
+ * человек примет завышенную выгоду за посчитанную. */
+function renderCraft(c) {
+  const box = $("#a-craft");
+  if (!c || !(c.candidates || []).length) {
+    // Честно объясняем пустоту, а не прячем секцию: «пусто без причины»
+    // читается как поломка, и человек ищет её в своём компьютере.
+    const skipped = c && c.skipped_slots ? c.skipped_slots : 0;
+    box.innerHTML = `<div class="note">Считать нечего, и это ограничение Blizzard,
+      а не сбой. У ${skipped} рецептов есть слоты качества: API сообщает, ЧТО
+      туда кладут, но не сколько — себестоимость посчитать нечем. Остальные
+      изделия либо не торгуются на товарном аукционе (снаряжение живёт на
+      реалмовых), либо крафт по ним убыточен.</div>`;
+    foldSum("#a-craft-sum", "нет данных");
+    return;
+  }
+  foldSum("#a-craft-sum", `${plural(c.total, "рецепт", "рецепта", "рецептов")} в плюсе`);
+  const rows = c.candidates
+    .map((r) => {
+      const mark = r.partial
+        ? ` <span class="tag" title="У рецепта ${r.quality_slots} слот(а) качества: туда идут реагенты, состав которых API не отдаёт. Настоящее сырьё дороже, выгода ниже показанной">сырьё неполное</span>`
+        : "";
+      const parts = (r.reagents || [])
+        .map((p) => `${escapeHtml(p.name)} ×${p.quantity}`)
+        .join(", ");
+      return `<div class="row" title="${escapeHtml(parts)}">
+        <span class="icon"></span>
+        <span class="iname">${escapeHtml(r.name)}${mark}
+          <span class="isub">${escapeHtml(r.profession || "")} · сырья на ${gold(
+        r.cost_gold
+      )} з → продать за ${gold(r.price_gold)} з</span>
+        </span>
+        <span class="num">${goldFine(r.profit_gold)}<span class="sub">за штуку</span></span>
+        <span class="num soft">${r.runs_on_budget.toLocaleString("ru-RU")}<span class="sub">на банк</span></span>
+        <span class="num gap${r.batch_profit_gold >= 500 ? " is-deal" : ""}">+${gold(
+        r.batch_profit_gold
+      )}</span>
+      </div>`;
+    })
+    .join("");
+
+  box.innerHTML = `
+    <div class="note" style="margin-bottom:8px">${escapeHtml(c.note)}</div>
+    <div class="rows">
+      <div class="row head">
+        <span></span><span>Изделие</span>
+        <span class="num">Навар</span>
+        <span class="num">Партия</span>
+        <span class="num">Итого</span>
+      </div>
+      ${rows}
+    </div>
+    <div style="height:12px"></div>`;
 }
 
 function headRow() {
   return `<div class="row head">
     <span></span><span>Товар</span>
     <span class="num" title="Цена самого дешёвого лота — столько стоит купить одну штуку прямо сейчас">Цена сейчас</span>
-    <span class="num" title="Цена, к которой вернётся прилавок, когда дешёвые лоты разберут">Цена после</span>
-    <span class="num" title="Сколько золота нужно, чтобы скупить все лоты дешевле «цены после»">Скупить всё</span>
-    <span class="num" title="Сколько останется чистыми, если перепродать скупленное по «цене после», за вычетом комиссии аукциона 5%">Навар</span>
+    <span class="num" title="По какой цене ты реально сможешь продать: это цена лота, на котором закончится твой выкуп. Выкупив только часть дешёвых лотов, пол не поднимешь — под тобой останутся чужие">Продать по</span>
+    <span class="num" title="Сколько имеет смысл взять и во что это встанет. Размер подобран под твой банк и под то, сколько рынок реально съест за сутки, — а не «весь дешёвый хвост»">Взять</span>
+    <span class="num" title="Сколько останется чистыми после комиссии 5%, и сколько это выходит в час. В час — потому что сделка на сутки и такая же на неделю стоят разного">Чистыми</span>
     <span class="state">Совет</span>
   </div>`;
+}
+
+// Чем ограничен размер сделки. Самое полезное, что можно сказать про
+// колонку «Взять»: без этого непонятно, почему нельзя взять побольше —
+// и именно непонимание приводило к покупке сорока тысяч единиц.
+function planHint(it) {
+  if (it.plan_limit === "весь хвост") {
+    return `Выкупается весь дешёвый хвост, поэтому пол поднимется до ${it.market_gold} з — по ней и продаёшь.`;
+  }
+  if (it.plan_limit === "до следующей ступеньки") {
+    return `Выкупить всё дешевле ${it.plan_sell_gold} з и по ней же перевыставить. Дальше банка не хватает, а пока чужие дешёвые лоты лежат, пол выше не поднимется.`;
+  }
+  return it.plan_limit ? "Сделки нет: " + it.plan_limit + "." : "";
 }
 
 function row(it) {
@@ -429,16 +653,22 @@ function row(it) {
   // Измеренный срок распродажи бьёт косвенное «движение»: он прямо
   // отвечает на вопрос «когда я верну деньги».
   let move = "";
-  if (it.hours_to_clear !== null && it.hours_to_clear !== undefined) {
-    const h = it.hours_to_clear;
+  if (it.plan_hours !== null && it.plan_hours !== undefined) {
+    const h = it.plan_hours;
     const t = h < 48 ? Math.round(h) + " ч" : (h / 24).toFixed(1) + " сут";
     // Очередь важнее срока: именно она объясняет, почему срок такой.
     const q = it.wall_qty
       ? ` (в очереди ${it.wall_qty.toLocaleString("ru-RU")} шт)`
       : "";
     move = ` · продашь через ~${t}${q}`;
-  } else if (it.sold_per_hour !== null && it.sold_per_hour !== undefined) {
-    move = ` · уходит ${it.sold_per_hour} шт/ч`;
+  } else if (it.net_per_hour !== null && it.net_per_hour !== undefined) {
+    // Чистая скорость: сколько разбирают МИНУС сколько подвозят дешёвого.
+    // Отрицательная означает, что подрезают быстрее, чем покупают, — это
+    // не «медленно», а «никогда», и слово должно быть другим.
+    move =
+      it.net_per_hour > 0
+        ? ` · очередь тает ${it.net_per_hour} шт/ч`
+        : ` · <span class="perm">подрезают быстрее, чем берут</span>`;
   } else if (it.activity_pct !== null && it.activity_pct !== undefined) {
     move = ` · ${it.activity_pct < 1 ? "стоит" : "движение " + it.activity_pct + "%"}`;
   }
@@ -453,7 +683,7 @@ function row(it) {
   }
   // Цветом отмечаем только то, где есть настоящие деньги. Порог тот же,
   // что в аналитике (MIN_UPSIDE_GOLD): два места, одно значение по смыслу.
-  const deal = it.upside_gold >= 500 ? " is-deal" : "";
+  const deal = it.plan_profit_gold >= 500 ? " is-deal" : "";
   // «unknown» намеренно пустое: пока истории по товару нет, приложение
   // молчит, а не выдаёт фазу патча за совет по конкретному товару.
   const words = { buy: "брать", sell: "продавать", hold: "держать", unknown: "копим" };
@@ -466,14 +696,24 @@ function row(it) {
       <span class="isub">${escapeHtml(it.subclass || "")} · ${it.quantity.toLocaleString("ru-RU")} шт${move}</span>
     </span>
     <span class="num">${goldFine(it.floor_gold)}</span>
-    <span class="num soft">${goldFine(it.market_gold)}</span>
-    <span class="num soft">${
-      it.deal_qty
-        ? gold(it.deal_cost_gold) +
-          `<span class="sub">${it.deal_qty.toLocaleString("ru-RU")} шт</span>`
+    <span class="num soft" title="${
+      it.plan_sell_gold
+        ? "Цена, по которой ты реально сможешь перевыставить: та, на которой закончится твой выкуп"
+        : "Цена, к которой вернётся прилавок, если выкупить весь дешёвый хвост целиком"
+    }">${goldFine(it.plan_sell_gold || it.market_gold)}</span>
+    <span class="num soft" title="${escapeHtml(planHint(it))}">${
+      it.plan_qty
+        ? gold(it.plan_cost_gold) +
+          `<span class="sub">${it.plan_qty.toLocaleString("ru-RU")} шт</span>`
         : "—"
     }</span>
-    <span class="num gap${deal}">${it.upside_gold >= 1 ? "+" + gold(it.upside_gold) : "—"}</span>
+    <span class="num gap${deal}">${
+      it.plan_profit_gold >= 1
+        ? "+" +
+          gold(it.plan_profit_gold) +
+          `<span class="sub">${gold(it.plan_profit_per_hour)} з/ч</span>`
+        : "—"
+    }</span>
     <span class="state" data-state="${it.state}">${words[it.state] || ""}</span>
   </div>`;
 }
@@ -513,6 +753,11 @@ function reload() {
   $("#stamp").textContent = "загрузка…";
   window.pywebview.api.start_load(state.region);
 }
+
+// Сворачивание вешаем СРАЗУ, не дожидаясь моста: секции существуют в
+// разметке с самого начала, и человек должен мочь их свернуть, пока
+// данные ещё считаются.
+initFolds();
 
 window.addEventListener("pywebviewready", async () => {
   const boot = await window.pywebview.api.bootstrap();

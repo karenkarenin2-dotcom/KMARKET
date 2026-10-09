@@ -227,6 +227,68 @@ body[data-max="1"] #btn-max .on-restore {
   margin-bottom: 8px;
 }
 
+/* ---------- сворачиваемые секции ----------
+ *
+ * Появились 2026-08-09 по прямой просьбе Карена: «всё так хаотично и
+ * непонятно». Секций на вкладке аукциона стало шесть, и все они лезли на
+ * экран разом, без подсказки, что читать первым.
+ *
+ * Движения нет (правило KTRANS): секция просто есть или её нет. Раскрытое
+ * состояние обозначается ЗНАКОМ и цветом текста, плашки под заголовком не
+ * появляется. Свёрнутый заголовок держит короткую сводку справа — иначе
+ * сворачивание прячет не только подробности, но и сам факт, что там
+ * что-то есть. */
+
+.fold-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fold-head .label {
+  margin-bottom: 0;
+  color: var(--text);
+}
+
+.fold.is-closed .fold-head .label {
+  color: var(--dim);
+}
+
+.fold-mark {
+  color: var(--dim);
+  font-size: 11px;
+  width: 10px;
+  flex: none;
+}
+
+.fold-sum {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fold-body {
+  padding-top: 12px;
+}
+
+.fold.is-closed .fold-body {
+  display: none;
+}
+
+/* Главная секция — та, с которой начинают читать. Тёплая линия слева
+ * ровно одна на всю вкладку: второй акцент был бы расхождением с KTRANS. */
+.fold.is-main {
+  border-left: 2px solid var(--accent);
+}
+
 /* ---------- вердикт ---------- */
 
 .verdict {

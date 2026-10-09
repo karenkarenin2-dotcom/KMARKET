@@ -53,12 +53,21 @@ def poll_once(
     Широкий срез пишется из ЭТОГО ЖЕ ответа, а не отдельным запросом:
     снимок уже скачан и разобран, всё нужное в нём есть.
 
-    ПРО ИЗМЕРЕНИЕ ПРОДАЖ. Предыдущий снимок держим в памяти и сравниваем
-    id лотов — так видно, что именно ушло с прилавка (см. auction.sold_between).
-    Файла состояния для этого не нужно: сборщик и так живёт целое окно в
-    55 минут, а часовой такт Blizzard попадает внутрь этого окна. Хранить
-    17 тысяч id между запусками в git означало бы гнать туда мегабайты
-    мусора каждый час.
+    ПРО ИЗМЕРЕНИЕ ПРОДАЖ И ПРИТОКА. Предыдущий снимок держим в памяти и
+    сравниваем id лотов: пропавшие — ушли с прилавка (sold_between),
+    появившиеся ниже уровня восстановления — подрезали нас (added_between).
+
+    ОДНОЙ ПАМЯТИ ПРОЦЕССА ОКАЗАЛОСЬ МАЛО (замерено 2026-08-09). Считалось,
+    что отрезка хватит: сборщик живёт полчаса, а такт Blizzard часовой.
+    На деле снимок обновляется около 41-й минуты часа, и граница попадала
+    внутрь отрезка, только если тот стартовал в подходящие полчаса. За
+    двое суток вышло 42 снимка и ДВА измерения — ни один товар не набрал
+    минимума, и вся ветка расчётов, опирающаяся на скорость продаж, молча
+    не работала.
+
+    Поэтому лоты передаются следующему отрезку через файл (--state). В git
+    он не попадает никогда: 17 тысяч id каждый час — это мегабайты мусора,
+    и такое правило в проекте уже оплачено.
     """
     try:
         snapshot = auction.fetch(region, token, track_lots=set(ids))
@@ -66,12 +75,13 @@ def poll_once(
         print(f"[KMARKET] Снимок {region.upper()} не удался: {error}", file=sys.stderr)
         return -1, previous
 
-    sold = sold_hours = None
+    sold = fresh_supply = sold_hours = None
     if previous is not None and previous.updated != snapshot.updated:
         sold = auction.sold_between(previous, snapshot)
+        fresh_supply = auction.added_between(previous, snapshot)
         sold_hours = (snapshot.updated - previous.updated).total_seconds() / 3600
 
-    added = storage.append_auction(snapshot, ids, sold, sold_hours)
+    added = storage.append_auction(snapshot, ids, sold, sold_hours, fresh_supply)
     note = ""
     if wide_hours and f"{snapshot.updated:%Y-%m-%d}" > WIDE_UNTIL:
         note = f", широкий срез отключён (срок вышел {WIDE_UNTIL})"
@@ -84,6 +94,12 @@ def poll_once(
             f", ПРОДАНО за {sold_hours:.1f} ч: "
             f"{sum(sold.values()):,} ед по {len(sold)} предметам".replace(",", " ")
         )
+        if fresh_supply:
+            note += (
+                f", ПОДВЕЗЛИ дешёвого: {sum(fresh_supply.values()):,} ед".replace(
+                    ",", " "
+                )
+            )
     print(
         f"[KMARKET] {region.upper()} аукцион: {snapshot.updated:%Y-%m-%d %H:%M} UTC, "
         f"предметов в снимке {len(snapshot.quotes)}, новых строк {added}{note}",
@@ -103,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="как часто писать ВЕСЬ аукцион, часов (0 — не писать)",
     )
+    parser.add_argument(
+        "--state",
+        default="",
+        help="файл памяти о лотах прошлого отрезка (ВНЕ git; пусто — не хранить)",
+    )
     args = parser.parse_args(argv)
 
     ids = watchlist.item_ids()
@@ -121,7 +142,19 @@ def main(argv: list[str] | None = None) -> int:
 
     deadline = time.monotonic() + args.minutes * 60
     polls = failures = added = 0
+    # Прошлый отрезок мог оставить нам свои лоты. Без этого измерение
+    # продаж выходило только у того отрезка, внутрь которого случайно
+    # попала 41-я минута часа, — и за двое суток набралось ровно два
+    # измерения на 409 товаров (замерено 2026-08-09).
     previous: auction.Snapshot | None = None
+    if args.state:
+        previous = auction.load_lots(args.region, args.state)
+        if previous is not None:
+            print(
+                f"[KMARKET] Помню прошлый снимок {previous.updated:%H:%M} UTC "
+                f"({len(previous.lots)} лотов) — продажи измеримы сразу.",
+                flush=True,
+            )
 
     while True:
         result, previous = poll_once(
@@ -136,6 +169,11 @@ def main(argv: list[str] | None = None) -> int:
         if deadline - time.monotonic() <= args.interval:
             break
         time.sleep(args.interval)
+
+    # Отдаём последний снимок следующему отрезку. Именно здесь, а не после
+    # каждого опроса: файл нужен только на стыке процессов.
+    if args.state and previous is not None and previous.lots:
+        auction.save_lots(previous, args.state)
 
     if args.minutes:
         print(

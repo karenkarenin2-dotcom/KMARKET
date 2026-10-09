@@ -7553,6 +7553,34 @@
   "subclass": "Кулинария",
   "subclass_id": 8
  },
+ "242642": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_herb_silkweed.jpg",
+  "id": 242642,
+  "level": 80,
+  "name": "Талассийские травы",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Кулинария",
+  "subclass_id": 8
+ },
+ "242643": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_food_legion_muskenbutter.jpg",
+  "id": 242643,
+  "level": 80,
+  "name": "Добрый кусок масла",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Кулинария",
+  "subclass_id": 8
+ },
  "242644": {
   "category": null,
   "class": "Ремесло",
@@ -7579,6 +7607,20 @@
   "subclass": "Кулинария",
   "subclass_id": 8
  },
+ "242646": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_enchant_dustspirit.jpg",
+  "id": 242646,
+  "level": 80,
+  "name": "Мешочек со специями",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Кулинария",
+  "subclass_id": 8
+ },
  "242647": {
   "category": null,
   "class": "Ремесло",
@@ -7591,6 +7633,20 @@
   "rank_of": null,
   "subclass": "Кулинария",
   "subclass_id": 8
+ },
+ "242651": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/item_alchemiststoneb.jpg",
+  "id": 242651,
+  "level": 70,
+  "name": "Стабилизированная вытяжка",
+  "quality": "Редкое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
  },
  "242712": {
   "category": 789,
@@ -7731,6 +7787,20 @@
   "rank_of": 2,
   "subclass": "Ювелирное дело",
   "subclass_id": 4
+ },
+ "243060": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_10_blacksmithing_craftedoptional_blacksmithdye_fire.jpg",
+  "id": 243060,
+  "level": 80,
+  "name": "Сияющий плавень",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Металл и камень",
+  "subclass_id": 7
  },
  "243576": {
   "category": 772,
@@ -8043,6 +8113,20 @@
   "subclass": "Оружие",
   "subclass_id": 11
  },
+ "244174": {
+  "category": null,
+  "class": "Профессия",
+  "class_id": 19,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_1h_enchantingbloodelf_b_01.jpg",
+  "id": 244174,
+  "level": 80,
+  "name": "Сверкающий медный жезл",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Наложение чар",
+  "subclass_id": 8
+ },
  "244633": {
   "category": 796,
   "class": "Ремесло",
@@ -8066,6 +8150,34 @@
   "level": 70,
   "name": "Насыщенная чешуйчатая шкура",
   "quality": "Редкое",
+  "rank": 2,
+  "rank_of": 2,
+  "subclass": "Кожа",
+  "subclass_id": 6
+ },
+ "244635": {
+  "category": 798,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_leatherworking_armor_banding_red.jpg",
+  "id": 244635,
+  "level": 70,
+  "name": "Луносветская окантовка доспеха",
+  "quality": "Необычное",
+  "rank": 1,
+  "rank_of": 2,
+  "subclass": "Кожа",
+  "subclass_id": 6
+ },
+ "244636": {
+  "category": 798,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_leatherworking_armor_banding_red.jpg",
+  "id": 244636,
+  "level": 70,
+  "name": "Луносветская окантовка доспеха",
+  "quality": "Необычное",
   "rank": 2,
   "rank_of": 2,
   "subclass": "Кожа",
@@ -8148,6 +8260,34 @@
   "rank_of": null,
   "subclass": "Трава",
   "subclass_id": 9
+ },
+ "245345": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/spell_nature_wispsplodegreen.jpg",
+  "id": 245345,
+  "level": 80,
+  "name": "Конденсированная жизненная сила",
+  "quality": "Редкое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
+ },
+ "245750": {
+  "category": null,
+  "class": "Доспехи",
+  "class_id": 4,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_inscriptions_darkmoondeck_void.jpg",
+  "id": 245750,
+  "level": 90,
+  "name": "Колода карт Новолуния \"Бездна\"",
+  "quality": "Эпическое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Разное",
+  "subclass_id": 0
  },
  "245764": {
   "category": 801,
@@ -8429,6 +8569,20 @@
   "subclass": "Дополнительные реагенты",
   "subclass_id": 18
  },
+ "245829": {
+  "category": null,
+  "class": "Доспехи",
+  "class_id": 4,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_inscriptions_darkmoondeck_bloom.jpg",
+  "id": 245829,
+  "level": 90,
+  "name": "Колода карт Новолуния \"Охота\"",
+  "quality": "Эпическое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Разное",
+  "subclass_id": 0
+ },
  "245835": {
   "category": null,
   "class": "Ремесло",
@@ -8455,6 +8609,20 @@
   "subclass": "Начертание",
   "subclass_id": 16
  },
+ "245846": {
+  "category": null,
+  "class": "Доспехи",
+  "class_id": 4,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_inscriptions_darkmoondeck_rot.jpg",
+  "id": 245846,
+  "level": 90,
+  "name": "Колода карт Новолуния \"Гниль\"",
+  "quality": "Эпическое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Разное",
+  "subclass_id": 0
+ },
  "245849": {
   "category": null,
   "class": "Ремесло",
@@ -8480,6 +8648,20 @@
   "rank_of": null,
   "subclass": "Начертание",
   "subclass_id": 16
+ },
+ "245855": {
+  "category": null,
+  "class": "Доспехи",
+  "class_id": 4,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_inscriptions_darkmoondeck_hunt.jpg",
+  "id": 245855,
+  "level": 90,
+  "name": "Колода карт Новолуния \"Кровь\"",
+  "quality": "Эпическое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Разное",
+  "subclass_id": 0
  },
  "245864": {
   "category": 823,
@@ -8537,6 +8719,34 @@
   "subclass": "Начертание",
   "subclass_id": 16
  },
+ "245881": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_inscription_parchmentvar06.jpg",
+  "id": 245881,
+  "level": 70,
+  "name": "Пергамент лексиколога",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Начертание",
+  "subclass_id": 16
+ },
+ "245882": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/shaman_pvp_ripplingwaters.jpg",
+  "id": 245882,
+  "level": 70,
+  "name": "Талассийская поющая вода",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Начертание",
+  "subclass_id": 16
+ },
  "2459": {
   "category": null,
   "class": "Расходуемые",
@@ -8591,6 +8801,20 @@
   "rank_of": 1,
   "subclass": "Завершающие реагенты",
   "subclass_id": 19
+ },
+ "247811": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_skinning_80_ambertanningoil.jpg",
+  "id": 247811,
+  "level": 80,
+  "name": "Масло из древесной сердцевины",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
  },
  "249218": {
   "category": null,
@@ -8672,6 +8896,20 @@
   "subclass": "Другое",
   "subclass_id": 11
  },
+ "251691": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_12_profession_tailoring_spellthread_blue.jpg",
+  "id": 251691,
+  "level": 80,
+  "name": "Крученая вышивальная нить",
+  "quality": "Необычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
+ },
  "251923": {
   "category": null,
   "class": "Ремесло",
@@ -8684,6 +8922,20 @@
   "rank_of": null,
   "subclass": "Начертание",
   "subclass_id": 16
+ },
+ "253302": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_10_engineering_device_gadget3_color3.jpg",
+  "id": 253302,
+  "level": 80,
+  "name": "Гибкий проволочный каркас",
+  "quality": "Редкое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
  },
  "253303": {
   "category": null,
@@ -8774,6 +9026,20 @@
   "quality": "Необычное",
   "rank": 1,
   "rank_of": 1,
+  "subclass": "Другое",
+  "subclass_id": 11
+ },
+ "256963": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/ui_resourcelumbermidnight.jpg",
+  "id": 256963,
+  "level": 10,
+  "name": "Талассийская древесина",
+  "quality": "Необычное",
+  "rank": null,
+  "rank_of": null,
   "subclass": "Другое",
   "subclass_id": 11
  },
@@ -9024,6 +9290,20 @@
   "rank": null,
   "rank_of": null,
   "subclass": "Взрывчатка и устройства",
+  "subclass_id": 0
+ },
+ "272392": {
+  "category": null,
+  "class": "Реагент",
+  "class_id": 5,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_leatherworking_70_petleash.jpg",
+  "id": 272392,
+  "level": 10,
+  "name": "Рваный поводок рыси",
+  "quality": "Эпическое",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Реагент",
   "subclass_id": 0
  },
  "27674": {
@@ -9779,6 +10059,20 @@
   "rank_of": null,
   "subclass": "Ювелирное дело",
   "subclass_id": 4
+ },
+ "38682": {
+  "category": null,
+  "class": "Ремесло",
+  "class_id": 7,
+  "icon": "https://render.worldofwarcraft.com/eu/icons/56/inv_inscription_armorscroll01.jpg",
+  "id": 38682,
+  "level": 200,
+  "name": "Материал для свитка наложения чар",
+  "quality": "Обычное",
+  "rank": null,
+  "rank_of": null,
+  "subclass": "Другое",
+  "subclass_id": 11
  },
  "39681": {
   "category": null,

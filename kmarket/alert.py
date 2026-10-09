@@ -143,18 +143,31 @@ def _bargain_message(item: dict) -> str:
     lines = [
         f"💰 <b>{item['name']}</b>",
         "",
-        f"Цена сейчас <b>{item['floor_gold']} з</b>, вернётся к {item['market_gold']} з.",
-        f"Вложить {_gold(item['deal_cost_gold'])} з "
-        f"({_gold(item['deal_qty'])} шт) → вернуть ~{_gold(item['upside_gold'])} з "
-        f"чистыми ({item['roi_pct']:.0f}%).",
+        f"Цена сейчас <b>{item['floor_gold']} з</b>, продать сможешь по "
+        f"{item['plan_sell_gold']} з.",
+        # РАЗМЕР СДЕЛКИ, А НЕ РАЗМЕР ХВОСТА. Раньше здесь стояло «вложить
+        # столько-то за весь хвост», и это было предложение, которого
+        # человек не может ни оплатить, ни распродать (см. разбор в
+        # analytics/auction.BUDGET_GOLD).
+        f"Выкупить всё дешевле {item['plan_sell_gold']} з — это "
+        f"{_gold(item['plan_qty'])} шт за {_gold(item['plan_cost_gold'])} з — и "
+        f"перевыставить по ней. Чистыми ~{_gold(item['plan_profit_gold'])} з "
+        f"({item['plan_roi_pct']:.0f}%).",
     ]
 
-    if item.get("hours_to_clear") is not None:
-        hours = item["hours_to_clear"]
+    if item.get("plan_hours") is not None:
+        hours = item["plan_hours"]
         srok = f"{hours:.0f} ч" if hours < 48 else f"{hours / 24:.1f} сут"
         lines.append(f"Разойдётся примерно за {srok}.")
     else:
         lines.append("Скорость продаж по нему ещё не измерена — срок неизвестен.")
+
+    if item.get("plan_limit") == "до следующей ступеньки":
+        lines.append(
+            f"Выше по стакану ещё {_gold(item['deal_qty'])} шт дешевле "
+            f"{item['market_gold']} з — на них банка не хватит, и пока они лежат, "
+            f"пол выше {item['plan_sell_gold']} з не поднимется."
+        )
 
     if not item.get("current_era", True):
         lines += [
@@ -224,7 +237,7 @@ def _worth_waking(item: dict) -> bool:
     спрос заведомо есть. Старьё без измеренной скорости молчит до тех пор,
     пока скорость не появится.
     """
-    if item.get("hours_to_clear") is not None:
+    if item.get("plan_hours") is not None:
         return True  # скорость измерена, а стоячие уже отсеяны в bargains
     return bool(item.get("current_era"))
 
@@ -250,7 +263,7 @@ def _auction_messages(prior: dict) -> tuple[list[str], list[int]]:
     worthy = [
         item
         for item in summary.get("bargains", [])
-        if item["upside_gold"] >= ALERT_MIN_UPSIDE and _worth_waking(item)
+        if item["plan_profit_gold"] >= ALERT_MIN_UPSIDE and _worth_waking(item)
     ]
     seen = set(prior.get("auction_seen", []))
     fresh = [item for item in worthy if item["item_id"] not in seen]
@@ -296,10 +309,17 @@ def evaluate(region: str, report: dict, prior: dict) -> tuple[list[str], dict]:
     # Забываем прошедшие события, чтобы список не рос и повтор сработал в след. цикле.
     state["events_notified"] = [label for label in notified if label in upcoming_labels]
 
-    # Сливы на товарном аукционе — отдельный, самый скоропортящийся повод.
-    auction_texts, seen = _auction_messages(prior)
-    messages.extend(auction_texts)
-    state["auction_seen"] = seen
+    # СЛИВЫ НА АУКЦИОНЕ БОЛЬШЕ НЕ БУДЯТ (решение Карена 2026-08-09).
+    #
+    # Выкуп дешёвого хвоста дважды проверен на живом прилавке, и оба раза
+    # сделки не существовало: снимок Blizzard часовой, а хвост разбирают
+    # за минуты. Секция ушла из окна как лотерея — значит и в телефон ей
+    # ходить нельзя. Порог пробуждения строже порога показа, а здесь
+    # показывать перестали вовсе.
+    #
+    # Функция `_auction_messages` оставлена рабочей: если такт Blizzard
+    # когда-нибудь ускорится, включить обратно — одна строка.
+    state["auction_seen"] = list(prior.get("auction_seen", []))
 
     # Список будущих событий пуст — самая дорогая из молчаливых поломок.
     # Напоминаем не чаще раза в неделю, иначе это станет шумом.
