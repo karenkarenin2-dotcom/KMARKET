@@ -1,11 +1,12 @@
 name: auction
 
-# Сбор товарного аукциона (commodities).
+# Сбор цен товарного аукциона (commodities): товары, выбранные в приложении
+# (data/tracked.json), плюс тихий фон реагентов Midnight (data/reagents.json).
 #
 # ОТДЕЛЬНО ОТ СБОРЩИКА ЖЕТОНА — намеренно. У аукциона свой такт: Blizzard
 # пересчитывает commodities раз в ЧАС, жетон — раз в 20 минут. В одном
 # workflow пришлось бы либо качать 3 МБ каждые десять минут впустую, либо
-# проредить жетон. Разные такты — разные расписания и разные файлы.
+# проредить жетон.
 #
 # Окно опроса здесь по той же причине, что и у жетона: крон Actions
 # исполняется раз в 1–3 часа вместо заказанного, и для часовых данных это
@@ -62,8 +63,7 @@ jobs:
               echo "Кто-то опередил с push (попытка ${attempt}) — беру облачную версию и переснимаю."
               git fetch -q origin
               git reset -q --hard origin/main
-              python -m kmarket.collect_auction --wide-hours 6 \
-                --state "$RUNNER_TEMP/kmarket-lots.csv" || true
+              python -m kmarket.collect_auction || true
               if [ -z "$(git status --porcelain data)" ]; then
                 return 0
               fi
@@ -78,62 +78,17 @@ jobs:
           rc=0
 
           while [ "$(date -u +%s)" -lt "$end" ]; do
-            # Отрезок ~30 минут: четыре опроса с шагом 10 минут.
-            #
-            # Почему не длиннее: коммиты идут после каждого отрезка, и
-            # растягивать их реже значит рисковать потерять больше при
-            # смерти раннера.
-            #
-            # --state ЛЕЧИТ ГЛАВНУЮ БЕДУ ЭТОГО ЦИКЛА (найдено 2026-08-09).
-            # Чтобы измерить продажи, процесс обязан застать СМЕНУ часового
-            # снимка. Раньше прошлый снимок жил только в памяти процесса, и
-            # тот, кто стартовал не в те полчаса, границу не видел вовсе:
-            # за двое суток вышло 42 снимка и ровно ДВА измерения. Файл в
-            # RUNNER_TEMP передаёт лоты следующему отрезку, поэтому граница
-            # ловится независимо от того, когда планировщик нас разбудил.
-            # В git этот файл не попадает — временная папка раннера чистится
-            # сама.
-            #
-            # --wide-hours 6 пишет ВЕСЬ аукцион четыре раза в сутки. Это
-            # временная мера на цикл патча 12.1 (12 августа) и сезона 2
-            # (18 августа): список слежки подобран до патча, и новых
-            # реагентов Coiled Isle в нём нет. Записать рынок целиком
-            # можно только пока это происходит — потом неоткуда.
-            # Замерено: ~2.3 МБ в сутки. Убрать после начала сентября.
-            python -m kmarket.collect_auction --minutes 35 --interval 600 --wide-hours 6 \
-              --state "$RUNNER_TEMP/kmarket-lots.csv" || rc=$?
+            # Подтянуть свежий список слежки. Приложение отправляет его в
+            # облако отдельным коммитом, и без этого новый товар начинал бы
+            # писаться только со следующего запуска workflow. Fast-forward
+            # не может испортить рабочие файлы: после publish дерево чистое.
+            git fetch -q origin && git merge -q --ff-only origin/main || true
+
+            # Отрезок ~35 минут: четыре опроса с шагом 10 минут. Коммиты идут
+            # после каждого отрезка — смерть раннера уносит не больше него.
+            python -m kmarket.collect_auction --minutes 35 --interval 600 || rc=$?
 
             publish
           done
 
           exit $rc
-
-  # Список слежки пересобирается раз в месяц: топ ликвидности меняется
-  # после патчей, и новые реагенты должны подхватываться сами. Держим в
-  # этом же файле, чтобы всё про аукцион лежало в одном месте.
-  watchlist:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Пересобрать список слежки
-        env:
-          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
-          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
-        run: python -m kmarket.watchlist
-      - name: Закоммитить список
-        run: |
-          if [ -z "$(git status --porcelain data)" ]; then
-            echo "Список не изменился."
-            exit 0
-          fi
-          git config user.name "kmarket-collector"
-          git config user.email "actions@users.noreply.github.com"
-          git add data
-          git commit -m "watchlist: $(date -u '+%Y-%m-%d') UTC"
-          git pull --rebase
-          git push

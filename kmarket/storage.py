@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
@@ -106,57 +106,19 @@ def append_live(price: TokenPrice) -> bool:
 # --------------------------------------------------------------------------
 # Аукцион. Устройство то же, что у жетона (месячный CSV, атомарная замена,
 # дедупликация по времени Blizzard), но ключ составной: в одном снимке
-# приходят десятки предметов, и точку задаёт пара (момент, предмет).
+# приходит сотня предметов, и точку задаёт пара (момент, предмет).
+#
+# КОЛОНОК ПЯТЬ, И ЭТО НАМЕРЕННО (упрощение 2026-10-09). Раньше их было
+# двенадцать: глубина дешёвого хвоста, стоимость выкупа, продажи, подвоз,
+# очередь. Всё это обслуживало перекупку, которая при часовом снимке
+# неисполнима (разобрано в CLAUDE.md). Старые файлы с лишними колонками
+# читаются как прежде — лишнее просто игнорируется.
 # --------------------------------------------------------------------------
 
-AUCTION_HEADER = (
-    "updated_utc",
-    "item_id",
-    "floor_copper",
-    "market_copper",
-    "quantity",
-    "lots",
-    "deal_qty",
-    "deal_cost",
-    # Сколько единиц ушло с прилавка с прошлого снимка и за сколько часов.
-    # Пусто, когда измерить не удалось: сборщик видит это, только если
-    # застал ОБА соседних снимка внутри одного окна. Пропуск — норма,
-    # а не поломка, и нулём его подменять нельзя: ноль значит «ничего не
-    # продалось», а пусто — «не измеряли».
-    "sold_qty",
-    "sold_hours",
-    "wall_qty",
-    # Сколько ДЕШЁВЫХ единиц (ниже уровня восстановления) выставили заново
-    # за тот же отрезок. Пара к sold_qty и меряется тем же способом —
-    # сравнением id лотов, только в другую сторону.
-    #
-    # Без этого числа нельзя ответить на главный вопрос перекупки: обгоняет
-    # ли спрос подвоз нового дешёвого товара. Продажи в отрыве от притока
-    # обманывают — товар может отлично уходить и при этом вечно оставаться
-    # подрезанным, потому что снизу непрерывно встают новые продавцы.
-    "added_qty",
-)
+AUCTION_HEADER = ("updated_utc", "item_id", "floor_copper", "market_copper", "quantity")
 
 AuctionKey = tuple[datetime, int]
-# floor, market, quantity, lots, deal_qty, deal_cost, sold_qty, sold_hours,
-# wall_qty, added_qty
-AuctionRow = tuple[
-    int, int, int, int, int, int, int | None, float | None, int, int | None
-]
-
-
-def _maybe_int(value: str | None) -> int | None:
-    try:
-        return int(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _maybe_float(value: str | None) -> float | None:
-    try:
-        return float(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
+AuctionRow = tuple[int, int, int]  # floor, market, quantity
 
 
 def auction_month_file(region: str, moment: datetime) -> Path:
@@ -176,52 +138,29 @@ def read_auction_month(path: Path) -> dict[AuctionKey, AuctionRow]:
                 rows[key] = (
                     int(row["floor_copper"]),
                     int(row["market_copper"]),
-                    int(row["quantity"]),
-                    int(row["lots"]),
-                    # Поля добавлены позже: у ранних строк их нет, и падать
-                    # из-за этого нельзя — история дороже полноты колонок.
-                    int(row.get("deal_qty") or 0),
-                    int(row.get("deal_cost") or 0),
-                    # А вот эти два именно None, если пусто: «не измеряли»
-                    # и «продалось ноль» — разные вещи.
-                    _maybe_int(row.get("sold_qty")),
-                    _maybe_float(row.get("sold_hours")),
-                    int(row.get("wall_qty") or 0),
-                    # Тоже None при пустом: «не измеряли» и «никто ничего
-                    # не выставил» — разные новости.
-                    _maybe_int(row.get("added_qty")),
+                    int(row.get("quantity") or 0),
                 )
             except (KeyError, ValueError, TypeError):
                 continue
     return rows
 
 
-def _write_auction_month(path: Path, rows: dict[AuctionKey, AuctionRow]) -> None:
+def write_auction_month(path: Path, rows: dict[AuctionKey, AuctionRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".csv.tmp")
     with temp.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(AUCTION_HEADER)
         for moment, item_id in sorted(rows):
-            values = [
-                "" if v is None else v for v in rows[(moment, item_id)]
-            ]
-            writer.writerow([_format(moment), item_id, *values])
+            writer.writerow([_format(moment), item_id, *rows[(moment, item_id)]])
     temp.replace(path)
 
 
-def append_auction(
-    snapshot,
-    item_ids: list[int],
-    sold: dict[int, int] | None = None,
-    sold_hours: float | None = None,
-    added_supply: dict[int, int] | None = None,
-) -> int:
+def append_auction(snapshot, item_ids: list[int]) -> int:
     """Дописать снимок по списку слежки. Возвращает число новых строк.
 
-    Снимок целиком не пишем никогда: в нём 12 тысяч предметов, а нужны
-    десятки (см. watchlist). Фильтрация здесь, а не в auction.fetch,
-    чтобы свежий снимок оставался пригодным для пересбора списка.
+    Снимок целиком не пишем никогда: в нём 12 тысяч предметов, а нужна
+    сотня с небольшим (см. kmarket.tracked).
     """
     path = auction_month_file(snapshot.region, snapshot.updated)
     rows = read_auction_month(path)
@@ -235,173 +174,35 @@ def append_auction(
         key = (moment, item_id)
         if key in rows:
             continue
-        rows[key] = (
-            quote.floor,
-            quote.market,
-            quote.quantity,
-            quote.lots,
-            quote.deal_qty,
-            quote.deal_cost,
-            # sold есть только когда сборщик застал оба соседних снимка.
-            # Предмет, которого в sold нет, но измерение было, продал ноль.
-            (sold.get(item_id, 0) if sold is not None else None),
-            (round(sold_hours, 2) if sold is not None and sold_hours else None),
-            quote.wall_qty,
-            (added_supply.get(item_id, 0) if added_supply is not None else None),
-        )
+        rows[key] = (quote.floor, quote.market, quote.quantity)
         added += 1
 
     if added:
-        _write_auction_month(path, rows)
+        write_auction_month(path, rows)
     return added
 
 
-# --------------------------------------------------------------------------
-# Широкий срез: весь аукцион целиком, несколько раз в сутки.
-#
-# ФАЙЛ НА СУТКИ, А НЕ НА МЕСЯЦ. Месячный файл здесь весил бы полтора
-# миллиона строк, и переписывать его целиком на каждом срезе (как мы
-# делаем с узкой историей) стало бы заметно дорого. Суточный — это
-# 48 тысяч строк, мгновенно.
-#
-# ПОЛЕЙ МЕНЬШЕ, ЧЕМ В УЗКОЙ ИСТОРИИ. Здесь нужен ответ на один вопрос:
-# что и насколько подорожало вокруг патча. Глубина выкупаемого хвоста
-# для этого не нужна, а вес файла она поднимает на треть.
-# --------------------------------------------------------------------------
-
-WIDE_HEADER = ("updated_utc", "item_id", "floor_copper", "market_copper", "quantity")
-
-
-def wide_day_file(region: str, moment: datetime) -> Path:
-    """data/auction_wide/eu/2026-08-12.csv"""
-    return config.AUCTION_WIDE_DIR / region / f"{moment:%Y-%m-%d}.csv"
-
-
-def wide_snapshots(region: str, moment: datetime) -> set[datetime]:
-    """Какие срезы за эти сутки уже записаны — по ним считаем, пора ли новый."""
-    path = wide_day_file(region, moment)
-    if not path.exists():
-        return set()
-    seen: set[datetime] = set()
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            try:
-                seen.add(_parse(row["updated_utc"]))
-            except (KeyError, ValueError, TypeError):
-                continue
-    return seen
-
-
-def append_auction_wide(snapshot) -> int:
-    """Дописать ВЕСЬ снимок в суточный файл. Возвращает число строк.
-
-    Дозапись, а не переписывание: срезы приходят по возрастанию времени,
-    поэтому файл и так остаётся упорядоченным, а git видит diff в хвост.
-    """
-    moment = snapshot.updated.astimezone(timezone.utc).replace(microsecond=0)
-    if moment in wide_snapshots(snapshot.region, moment):
-        return 0  # этот срез уже записан — дублей не плодим
-
-    path = wide_day_file(snapshot.region, moment)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not path.exists()
-    with path.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        if fresh:
-            writer.writerow(WIDE_HEADER)
-        for item_id in sorted(snapshot.quotes):
-            quote = snapshot.quotes[item_id]
-            writer.writerow(
-                [_format(moment), item_id, quote.floor, quote.market, quote.quantity]
-            )
-    return len(snapshot.quotes)
-
-
-def wide_due(region: str, moment: datetime, every_hours: float) -> bool:
-    """Пора ли писать широкий срез.
-
-    Смотрим на самый свежий уже записанный срез за эти сутки И за
-    предыдущие: без второго на стыке суток мы писали бы срез сразу
-    после полуночи независимо от того, когда был предыдущий.
-    """
-    seen = wide_snapshots(region, moment) | wide_snapshots(
-        region, moment - timedelta(days=1)
-    )
-    if not seen:
-        return True
-    return (moment - max(seen)).total_seconds() >= every_hours * 3600 - 300
-
-
 def load_auction(
-    region: str, item_id: int | None = None, months: int | None = None
-) -> list[tuple]:
-    """История аукциона региона: [(момент, предмет, пол, рынок, ...), ...].
+    region: str, item_ids: set[int] | None = None
+) -> dict[int, list[tuple[datetime, int, int, int]]]:
+    """История товаров: {предмет: [(момент, пол, рынок, количество), ...]}.
 
-    `months` — сколько ПОСЛЕДНИХ месячных файлов читать. Без ограничения
-    функция честно прочтёт всё, что накопилось, и на длинной дистанции это
-    становится дорого: замерено, что 400 товаров дают 3.5 млн строк в год,
-    а чтение такого объёма занимает секунды вместо сотых долей.
-
-    Аналитике столько не нужно — окно сравнения 21 день, ритм смотрит 60.
-    Поэтому читаем ровно нужный хвост, а не весь архив.
+    Читает ВСЕ месяцы: товаров под слежкой сотня, а не четыреста, и год
+    такой истории — десятки мегабайт, которые читаются за секунду. Обрезать
+    историю незачем: ради неё проект и существует.
     """
     directory = config.AUCTION_DIR / region
     if not directory.exists():
-        return []
-    files = sorted(directory.glob("*.csv"))
-    if months:
-        files = files[-months:]
+        return {}
     rows: dict[AuctionKey, AuctionRow] = {}
-    for path in files:
+    for path in sorted(directory.glob("*.csv")):
         rows.update(read_auction_month(path))
-    return [
-        (moment, item, *rows[(moment, item)])
-        for moment, item in sorted(rows)
-        if item_id is None or item == item_id
-    ]
-
-
-def load_wide(
-    region: str, item_ids: set[int] | None = None, days: int | None = None
-) -> list[tuple[datetime, int, int, int, int]]:
-    """Широкий срез: [(момент, предмет, пол, рынок, количество), ...].
-
-    ЗАЧЕМ ЧИТАТЬ ЕГО, КОГДА ЕСТЬ УЗКАЯ ИСТОРИЯ. Узкая пишется только по
-    списку слежки, а список до 2026-08-09 набирался по обороту — значит по
-    реагентам, попавшим в слежку позже (по РОЛИ), узкой истории нет вовсе.
-    Широкий срез всё это время писал ВЕСЬ аукцион четыре раза в сутки, и
-    для вопроса «дорого ли сейчас» его частоты достаточно: позиционная
-    сделка живёт неделями, а не часами.
-
-    Полей здесь меньше (нет глубины хвоста) — для цены и запаса хватает.
-    """
-    directory = config.AUCTION_WIDE_DIR / region
-    if not directory.exists():
-        return []
-    files = sorted(directory.glob("*.csv"))
-    if days:
-        files = files[-days:]
-    rows: list[tuple[datetime, int, int, int, int]] = []
-    for path in files:
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            for row in csv.DictReader(handle):
-                try:
-                    item_id = int(row["item_id"])
-                    if item_ids is not None and item_id not in item_ids:
-                        continue
-                    rows.append(
-                        (
-                            _parse(row["updated_utc"]),
-                            item_id,
-                            int(row["floor_copper"]),
-                            int(row["market_copper"]),
-                            int(row["quantity"]),
-                        )
-                    )
-                except (KeyError, ValueError, TypeError):
-                    continue  # битая строка не повод терять срез
-    rows.sort()
-    return rows
+    result: dict[int, list[tuple[datetime, int, int, int]]] = {}
+    for moment, item in sorted(rows):
+        if item_ids is not None and item not in item_ids:
+            continue
+        result.setdefault(item, []).append((moment, *rows[(moment, item)]))
+    return result
 
 
 def load_history(region: str) -> list[tuple[datetime, int]]:

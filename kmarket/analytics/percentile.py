@@ -25,6 +25,15 @@ WINDOWS: tuple[tuple[str, int], ...] = (
     ("всё время", 100_000),
 )
 
+# У товаров окна короче: реагенты живут циклом патча (месяцы), а не годами,
+# и внешнего архива у них нет — история копится с 2026-08-06.
+ITEM_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("7 дней", 7),
+    ("30 дней", 30),
+    ("90 дней", 90),
+    ("всё время", 100_000),
+)
+
 DECISION_WINDOW = 90
 CONTEXT_WINDOW = 365
 
@@ -70,9 +79,28 @@ def window_stats(series: pd.Series, current: float, label: str, days: int) -> Wi
     )
 
 
-def all_windows(series: pd.Series, current: float) -> list[WindowStats]:
-    stats = (window_stats(series, current, label, days) for label, days in WINDOWS)
-    return [s for s in stats if s is not None]
+def all_windows(
+    series: pd.Series,
+    current: float,
+    windows: tuple[tuple[str, int], ...] = WINDOWS,
+    *,
+    honest_span: bool = False,
+) -> list[WindowStats]:
+    """Статистика по окнам.
+
+    `honest_span` — выбросить окна, которых история ещё не покрыла. Без
+    этого у товара с двумя месяцами истории «90 дней» и «всё время» были
+    бы одним и тем же окном под разными подписями, и подпись врала бы.
+    """
+    span = (series.index[-1] - series.index[0]).days if len(series) > 1 else 0
+    out = []
+    for label, days in windows:
+        if honest_span and days < 100_000 and span < days * 0.9:
+            continue
+        stats = window_stats(series, current, label, days)
+        if stats is not None:
+            out.append(stats)
+    return out
 
 
 @dataclass

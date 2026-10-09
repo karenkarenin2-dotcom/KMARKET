@@ -1,4 +1,8 @@
-"""Сборка полного отчёта — единственное, что нужно знать дашборду.
+"""Сборка полного отчёта — единственное, что нужно знать окну.
+
+Отчёт двух видов: по жетону (`report`) и по товару аукциона
+(`item_report`). Устройство одно — история как ряд цен, перцентили, тренд,
+недельный ритм, фаза события, — различаются вердикт и длина окон.
 
 Возвращает обычные словари и списки: слой представления не должен ничего
 знать ни про pandas, ни про то, как считается перцентиль.
@@ -17,7 +21,8 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .. import config
-from . import backtest, events, frame, percentile, seasonality, verdict
+from ..blizzard import COPPER_PER_GOLD
+from . import backtest, events, frame, item, percentile, seasonality, verdict
 
 CACHE_TTL_SECONDS = 240
 _cache: dict[str, tuple[float, dict]] = {}
@@ -36,8 +41,13 @@ DAILY_FROM_DAYS = 45
 
 
 def chart_data(region: str, days: int, max_points: int = 900) -> dict:
-    """Точки графика в МЕСТНОМ времени плюс попавшие в диапазон события."""
-    chunk = frame.window(frame.load(region), days)
+    """Точки графика жетона в МЕСТНОМ времени плюс попавшие в диапазон события."""
+    return series_chart(frame.load(region), days, max_points)
+
+
+def series_chart(series: pd.Series, days: int, max_points: int = 900) -> dict:
+    """Точки графика любого ряда цен — жетона или товара."""
+    chunk = frame.window(series, days)
     if chunk.empty:
         return {"points": [], "events": []}
     marks = events.in_range(chunk.index[0], chunk.index[-1])
@@ -81,6 +91,7 @@ def _build(region: str) -> dict:
 
     now = datetime.now(timezone.utc)
     return {
+        "kind": "token",
         "region": region,
         "empty": False,
         "generated_at": now.isoformat(),
@@ -99,6 +110,7 @@ def _build(region: str) -> dict:
         "trend": asdict(movement),
         "windows": [asdict(w) | {"spread_pct": round(w.spread_pct, 1)} for w in windows],
         "seasonality": asdict(season) if season else None,
+        "rhythm": _rhythm(season),
         "events": {
             "now": event_now,
             "upcoming": events.upcoming(3),
@@ -110,6 +122,82 @@ def _build(region: str) -> dict:
             "grid": [asdict(r) for r in results],
         },
         "timezones": {"local": config.LOCAL_TZ, "server": config.SERVER_TZ},
+    }
+
+
+def _rhythm(season) -> dict | None:
+    """Недельный ритм в виде, который окно показывает без пересчёта."""
+    if season is None:
+        return None
+    return {
+        "cheapest": season.best[:3],
+        "dearest": season.worst[:3],
+        "by_weekday": season.by_weekday,
+        "spread_pct": round(season.worst[0]["deviation"] - season.best[0]["deviation"], 1)
+        if season.best and season.worst
+        else None,
+        "points": season.points,
+        "reliable": season.reliable,
+        "timezone": season.timezone,
+    }
+
+
+def item_report(rows: list[tuple], *, live=None) -> dict:
+    """Отчёт по товару аукциона.
+
+    `rows` — история из storage.load_auction, `live` — котировка из свежего
+    снимка (auction.Quote) с моментом снимка: (момент, Quote). Свежая точка
+    добавляется к ряду в памяти и на диск не пишется — у истории аукциона
+    один писатель, облачный сборщик.
+    """
+    rows = list(rows)
+    if live is not None:
+        moment, quote = live
+        if not rows or moment > rows[-1][0]:
+            rows.append((moment, quote.floor, quote.market, quote.quantity))
+    series = frame.item_series(rows)
+    if series.empty:
+        return {"kind": "item", "empty": True}
+
+    updated = series.index[-1]
+    current = float(series.iloc[-1])
+    windows = percentile.all_windows(
+        series, current, percentile.ITEM_WINDOWS, honest_span=True
+    )
+    movement = percentile.trend(series, current)
+    event_now = events.context()
+    upcoming = events.upcoming(3)
+    call, found_cycle = item.decide(
+        series, current, windows, movement, event=event_now, upcoming=upcoming
+    )
+    season = seasonality.compute(series, robust=True)
+
+    now = datetime.now(timezone.utc)
+    span = (series.index[-1] - series.index[0]).days
+    return {
+        "kind": "item",
+        "empty": False,
+        "generated_at": now.isoformat(),
+        "current": {
+            "price": round(current, 2),
+            "floor": round(rows[-1][1] / COPPER_PER_GOLD, 2),
+            "updated_utc": updated.isoformat(),
+            "updated_local": _local(updated),
+            "age_minutes": round((now - updated.to_pydatetime()).total_seconds() / 60),
+        },
+        "history": {
+            "points": int(len(series)),
+            "since": series.index[0].isoformat(),
+            "days": span,
+        },
+        "verdict": asdict(call),
+        "trend": asdict(movement),
+        "windows": [asdict(w) | {"spread_pct": round(w.spread_pct, 1)} for w in windows],
+        "rhythm": _rhythm(season),
+        "cycle": {k: v for k, v in found_cycle.items() if not k.startswith("_")}
+        if found_cycle
+        else None,
+        "events": {"now": event_now, "upcoming": upcoming},
     }
 
 

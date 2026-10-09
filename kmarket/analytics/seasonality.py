@@ -53,7 +53,18 @@ def deviations(series: pd.Series, days: int = 365) -> pd.Series:
     return result.dropna()
 
 
-def compute(series: pd.Series, days: int = 365) -> Seasonality | None:
+def _reduce(grouped, robust: bool) -> pd.Series:
+    return grouped.median() if robust else grouped.mean()
+
+
+def compute(series: pd.Series, days: int = 365, *, robust: bool = False) -> Seasonality | None:
+    """Матрица ритма. `robust` — медианы вместо средних.
+
+    У жетона средние честны: выбросов мало, точек тысячи. У товара
+    аукциона одиночный лот по конской цене даёт +80% в одной точке, а
+    клеток по четыре замера — и среднее по такой клетке рисует «дорогой
+    четверг», которого нет (поймано 2026-10-09 на гелиотропе: +39%).
+    """
     values = deviations(series, days)
     if values.empty:
         return None
@@ -68,7 +79,7 @@ def compute(series: pd.Series, days: int = 365) -> Seasonality | None:
     )
 
     grouped = table.groupby(["weekday", "hour"])["deviation"]
-    means = grouped.mean()
+    means = grouped.median() if robust else grouped.mean()
     sizes = grouped.size()
 
     matrix: list[list[float | None]] = []
@@ -104,11 +115,11 @@ def compute(series: pd.Series, days: int = 365) -> Seasonality | None:
         worst=ordered[-5:][::-1],
         by_weekday={
             WEEKDAYS[day]: round(float(value), 3)
-            for day, value in table.groupby("weekday")["deviation"].mean().items()
+            for day, value in _reduce(table.groupby("weekday")["deviation"], robust).items()
         },
         by_hour={
             int(hour): round(float(value), 3)
-            for hour, value in table.groupby("hour")["deviation"].mean().items()
+            for hour, value in _reduce(table.groupby("hour")["deviation"], robust).items()
         },
         points=int(len(values)),
         days=days,

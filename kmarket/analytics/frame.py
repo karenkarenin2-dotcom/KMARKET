@@ -27,6 +27,22 @@ def load(region: str = config.PRIMARY_REGION) -> pd.Series:
     return series.sort_index()
 
 
+def item_series(rows: list[tuple]) -> pd.Series:
+    """История товара [(момент, пол, рынок, количество), ...] → рынок в золоте.
+
+    Берём `market` (граница нижних 15% предложения), а не пол: один лот по
+    бросовой цене двигает пол, но не двигает рынок, и перцентиль по полу
+    прыгал бы от каждого случайного выброса.
+    """
+    if not rows:
+        return pd.Series(dtype="float64", index=pd.DatetimeIndex([], tz="UTC"))
+    series = pd.Series(
+        [row[2] / COPPER_PER_GOLD for row in rows],
+        index=pd.to_datetime([row[0] for row in rows], utc=True),
+    )
+    return series.sort_index()
+
+
 def window(series: pd.Series, days: float, *, end: pd.Timestamp | None = None) -> pd.Series:
     """Последние `days` суток истории (по умолчанию — до последней точки)."""
     if series.empty:

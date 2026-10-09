@@ -40,25 +40,40 @@
 
 <main id="app">
 
-  <nav class="tabs">
-    <button class="tab is-on" data-tab="token">Жетон</button>
-    <button class="tab" data-tab="auction">Аукцион</button>
-    <span class="gsep"></span>
-    <button class="tab" data-region="eu" id="reg-eu">EU</button>
-    <button class="tab" data-region="us" id="reg-us">US</button>
+  <!-- Слева то, за чем следим. Жетон всегда первый, товары добавляются
+       поиском. Выбор подсвечивается линией, как вкладки в KTRANS. -->
+  <aside class="side">
+    <div class="label">Слежу</div>
+    <div class="assets" id="assets"></div>
+    <button class="add" id="add" type="button">+ добавить товар</button>
     <span class="spacer"></span>
+    <button class="range" id="refresh" type="button" title="Спросить у Blizzard свежие цены">обновить</button>
     <span class="stamp" id="stamp">загрузка…</span>
-  </nav>
+  </aside>
 
-  <!-- ================= ЖЕТОН ================= -->
-  <section class="view is-on" data-view="token">
+  <!-- ================= РАЗБОР ЖЕТОНА ИЛИ ТОВАРА ================= -->
+  <section class="view is-on" data-view="asset">
+
+    <div class="ahead">
+      <span class="icon big" id="a-icon"></span>
+      <div class="title">
+        <div class="aname" id="a-name">Жетон WoW</div>
+        <div class="isub" id="a-sub"></div>
+      </div>
+      <span class="spacer"></span>
+      <span class="regions" id="regions">
+        <button class="tab" data-region="eu">EU</button>
+        <button class="tab" data-region="us">US</button>
+      </span>
+      <button class="range" id="untrack" type="button" hidden>не следить</button>
+    </div>
 
     <div class="card">
       <div class="verdict">
         <div>
           <div class="label">Вердикт</div>
           <div class="vstate" id="v-state">…</div>
-          <div class="price" id="v-price">— <span class="unit">g</span></div>
+          <div class="price" id="v-price">—</div>
         </div>
         <div>
           <div class="vsummary" id="v-summary">Считаю историю…</div>
@@ -73,88 +88,47 @@
         <span class="readout" id="probe-readout" hidden></span>
       </div>
       <svg class="chart" id="chart" preserveAspectRatio="none"></svg>
-      <!-- Сутки и неделя добавлены по просьбе Карена 2026-08-09: цена
-           пересчитывается раз в 20 минут, и на коротком горизонте видно
-           внутрисуточное движение, которое на 30 днях уже сглажено. -->
       <div class="ranges" id="ranges">
         <button class="range" data-days="1">сутки</button>
         <button class="range" data-days="7">7 дн</button>
-        <button class="range" data-days="30">30 дн</button>
-        <button class="range is-on" data-days="90">90 дн</button>
+        <button class="range is-on" data-days="30">30 дн</button>
+        <button class="range" data-days="90">90 дн</button>
         <button class="range" data-days="365">год</button>
         <button class="range" data-days="3650">всё</button>
       </div>
     </div>
 
     <div class="grid" id="windows"></div>
+
+    <div class="pair">
+      <div class="card" id="rhythm-card">
+        <div class="label">Недельный ритм · время серверов</div>
+        <div id="rhythm"></div>
+      </div>
+      <div class="card" id="cycle-card">
+        <div class="label">Цикл контента</div>
+        <div id="cycle"></div>
+      </div>
+    </div>
   </section>
 
-  <!-- ================= АУКЦИОН ================= -->
-  <section class="view" data-view="auction">
-
-    <div class="card" id="auction-note">
-      <div class="chart-head">
-        <span class="label">Товарный аукцион EU</span>
-        <button class="range" id="a-refresh">обновить</button>
-      </div>
-      <div class="note" id="a-note">Загружаю…</div>
-      <div class="caveat" id="a-accuracy" hidden></div>
-      <div class="ready" id="a-ready" hidden></div>
+  <!-- ================= ПОИСК ТОВАРА ================= -->
+  <section class="view" data-view="search">
+    <div class="card">
+      <div class="label">Добавить товар</div>
+      <form class="search" id="search-form">
+        <input id="q" type="text" placeholder="Название, например: гелиотроп" autocomplete="off" spellcheck="false">
+        <button class="range" type="submit">найти</button>
+      </form>
+      <div class="note" id="search-note">Ищется по товарному аукциону EU — реагенты, расходники,
+        самоцветы, руны. Снаряжение и петы живут на аукционах отдельных реалмов, их здесь нет.</div>
+      <div class="rows" id="results" hidden></div>
     </div>
-
-    <!-- ПОРЯДОК СЕКЦИЙ — ЭТО ОТВЕТ НА «НЕ ПОНИМАЮ, КАК ПОЛЬЗОВАТЬСЯ».
-         Сверху вниз: что делать сейчас → чем это подкрепить → всё
-         остальное. Первая секция раскрыта, прочие свёрнуты, чтобы экран
-         не начинался с шести списков разом. -->
-
-    <section class="card fold is-main" data-fold="stockpile">
-      <button class="fold-head" type="button">
-        <span class="fold-mark">−</span>
-        <span class="label">Что запасать под патч</span>
-        <span class="fold-sum" id="a-stockpile-sum"></span>
-      </button>
-      <div class="fold-body" id="a-stockpile"></div>
-    </section>
-
-    <section class="card fold is-closed" data-fold="craft">
-      <button class="fold-head" type="button">
-        <span class="fold-mark">+</span>
-        <span class="label">Выгодно скрафтить</span>
-        <span class="fold-sum" id="a-craft-sum"></span>
-      </button>
-      <div class="fold-body" id="a-craft"></div>
-    </section>
-
-    <!-- СЕКЦИИ «РАЗРЫВЫ В СТАКАНЕ» БОЛЬШЕ НЕТ (решение Карена 2026-08-09).
-         Выкуп дешёвого хвоста дважды проверен на живом прилавке, и оба
-         раза сделка не существовала: снимок Blizzard обновляется раз в
-         час, а хвост разбирают за минуты. Держать это на экране значило
-         бы предлагать заведомо неисполнимое. Расчёт остался в
-         analytics.bargains на случай, если такт когда-нибудь изменится. -->
-
-    <section class="card fold is-closed" data-fold="rhythm" id="a-rhythm" hidden>
-      <button class="fold-head" type="button">
-        <span class="fold-mark">+</span>
-        <span class="label">Недельный ритм · время серверов</span>
-        <span class="fold-sum" id="a-rhythm-sum"></span>
-      </button>
-      <div class="fold-body" id="a-rhythm-body"></div>
-    </section>
-
-    <section class="card fold is-closed" data-fold="rows">
-      <button class="fold-head" type="button">
-        <span class="fold-mark">+</span>
-        <span class="label">Все товары под слежкой</span>
-        <span class="fold-sum" id="a-rows-sum"></span>
-      </button>
-      <div class="fold-body">
-        <div class="rows" id="a-rows"></div>
-      </div>
-    </section>
   </section>
 
 </main>
 
+<div id="toast" hidden></div>
 <div id="error" hidden></div>
 
 <script src="app.js"></script>

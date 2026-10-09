@@ -41,8 +41,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Нужны для живого снимка аукциона: сливы скоропортящиеся, и
-          # смотреть на сохранённый час назад срез бессмысленно.
+          # Нужны, чтобы заметить выход патча и смену сезона (gameinfo).
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
         run: python -m kmarket.alert ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}

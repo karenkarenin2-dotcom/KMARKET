@@ -159,12 +159,18 @@ def _entry(item_id: int, raw: dict, token: str, region: str) -> dict:
     }
 
 
-def _rank_groups(token: str, region: str, locale: str) -> None:
-    """Достроить группы качества и проставить ранги всем известным предметам."""
+def _rank_groups(token: str, region: str, locale: str, fresh: set[int]) -> None:
+    """Достроить группы качества и проставить ранги всем известным предметам.
+
+    Соседей пробуем только у `fresh` — только что добавленных предметов.
+    У старых записей группа уже собрана, а чужих соседей мы не кэшируем,
+    и проба всех подряд превращала каждый поиск в окне в сотни запросов
+    и минуты ожидания (поймано 2026-10-09).
+    """
     data = load()
 
     # Шаг 1 — найти собратьев за пределами уже известного набора.
-    tiered = [e for e in data.values() if e.get("category")]
+    tiered = [e for e in data.values() if e.get("category") and e["id"] in fresh]
     for entry in list(tiered):
         item_id = entry["id"]
         for neighbour in range(item_id - NEIGHBOURS, item_id + NEIGHBOURS + 1):
@@ -220,6 +226,34 @@ def resolve(
         if progress and done % 25 == 0:
             print(f"[KMARKET] Справочник: {done} из {len(missing)}", flush=True)
 
-    _rank_groups(token, region, locale)
+    _rank_groups(token, region, locale, set(missing))
     save()
     return data
+
+
+def search(query: str, token: str, *, region: str = config.PRIMARY_REGION) -> list[dict]:
+    """Найти предметы по куску названия: [{"id", "name"}], до сотни штук.
+
+    Поиск Blizzard нечёткий и про аукцион ничего не знает: на «гелиотроп»
+    он вернёт и самоцвет, и шмот с таким словом в имени. Отсеивать то, что
+    на товарном аукционе не торгуется, — забота вызывающего (приложение
+    сверяет результат со свежим снимком).
+    """
+    import urllib.parse
+
+    text = query.strip()
+    if len(text) < 2:
+        return []
+    url = (
+        f"https://{region}.api.blizzard.com/data/wow/search/item"
+        f"?namespace=static-{region}&name.ru_RU={urllib.parse.quote(text)}"
+        f"&orderby=id:desc&_pageSize=100"
+    )
+    found = blizzard._http_json(url, headers={"Authorization": f"Bearer {token}"})
+    out = []
+    for result in found.get("results", []):
+        data = result.get("data") or {}
+        name = (data.get("name") or {}).get("ru_RU") or ""
+        if data.get("id") and name:
+            out.append({"id": int(data["id"]), "name": name})
+    return out
