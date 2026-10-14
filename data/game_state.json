@@ -1,5 +1,5 @@
 {
- "build": "12.1.0",
+ "build": "12.1.5",
  "mplus_season": {
   "id": 18,
   "started": "2026-08-12"
@@ -8,7 +8,7 @@
   "id": 42,
   "started": null
  },
- "checked_utc": "2026-10-14T11:41:56+00:00",
+ "checked_utc": "2026-10-14T17:00:19+00:00",
  "detected": [
   {
    "kind": "season",
