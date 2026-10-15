@@ -1,9 +1,9 @@
 {
   "eu": {
-    "verdict": "wait",
+    "verdict": "avoid",
     "deep_bottom": false,
     "events_notified": [],
     "stale_reminded": "2026-10-13"
   },
-  "_updated": "2026-10-15T14:49:33.554125+00:00"
+  "_updated": "2026-10-15T19:00:41.367032+00:00"
 }
