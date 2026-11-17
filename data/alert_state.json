@@ -1,9 +1,9 @@
 {
   "eu": {
-    "verdict": "avoid",
-    "deep_bottom": false,
+    "verdict": "buy",
+    "deep_bottom": true,
     "events_notified": [],
     "stale_reminded": "2026-11-17"
   },
-  "_updated": "2026-11-17T03:39:12.281205+00:00"
+  "_updated": "2026-11-17T13:02:16.491201+00:00"
 }
